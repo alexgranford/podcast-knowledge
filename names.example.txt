@@ -1,0 +1,20 @@
+# podnote name rules. One per line. Blank lines, lines starting with # and text after " #" are ignored.
+#
+#   wrong spelling => Right Spelling   fixes a recurring speech-recognition mishearing everywhere in a note
+#   !phrase                            drops any bullet containing the phrase (a sponsor that slips through)
+#   @show name fragment => hosts       names a show's regular hosts when the show registry knows none yet
+#
+# Copy this file to names.txt (which stays private) and add your own rules as you notice them.
+# Sponsors, URLs and self-promotion are dropped automatically; hosts are normally learned by the
+# show registry (podshows.py), so @ lines are rarely needed.
+
+# --- name fixes --------------------------------------------------------------
+Ada Lovelase => Ada Lovelace
+Marie Cury => Marie Curie
+Carl Sagen => Carl Sagan
+
+# --- drop lines --------------------------------------------------------------
+# !Example Mattress Company
+
+# --- hosts (only for a show the registry does not know yet) -------------------
+# @The Example Science Show => Sam Sample, Jo Example

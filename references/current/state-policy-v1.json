@@ -1,0 +1,29 @@
+{
+  "diagnostic_max_chars": 4096,
+  "consecutive_failure_ceiling": 3,
+  "operation_attempt_ceilings": {
+    "transport": 3,
+    "vad_scan": 2,
+    "audio_window": 2,
+    "asr_window": 2,
+    "extraction_packet": 1,
+    "cluster_plan": 1,
+    "synthesis_section": 1,
+    "delivery": 1
+  },
+  "failure_classes": [
+    "transport_unreachable",
+    "transport_timeout",
+    "model_load_failed",
+    "model_crashed",
+    "response_truncated",
+    "response_malformed",
+    "schema_invalid",
+    "semantic_invalid",
+    "coverage_incomplete",
+    "source_changed",
+    "lease_lost",
+    "delivery_failed",
+    "unknown_internal"
+  ]
+}

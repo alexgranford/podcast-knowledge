@@ -1,0 +1,5 @@
+# The speech-detection (Silero VAD) runtime, in its own venv. Do not install by hand:
+#   python3 scripts/setup_vad.py
+# creates the venv, installs these, runs the self-test and writes the readiness record.
+onnxruntime>=1.17
+numpy>=1.26

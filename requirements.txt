@@ -1,0 +1,5 @@
+# podcast-knowledge scripts (Python 3.11+): pip install -r requirements.txt
+# Also needed: ffmpeg on the PATH, and the speech-detection runtime (requirements-vad.txt).
+requests>=2.31
+jsonschema>=4.21
+PyYAML>=6

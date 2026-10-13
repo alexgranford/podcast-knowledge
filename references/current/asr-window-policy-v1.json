@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "detector": "silero-vad",
+  "detector_parameters": {
+    "frame_samples": 512,
+    "threshold": 0.5,
+    "negative_threshold": 0.35,
+    "min_speech_duration_ms": 250,
+    "min_silence_duration_ms": 100,
+    "speech_pad_ms": 30
+  },
+  "target_window_ms": 900000,
+  "search_before_ms": 120000,
+  "search_after_ms": 120000,
+  "minimum_silence_ms": 600,
+  "boundary_guard_ms": 150,
+  "hard_max_window_ms": 1080000,
+  "timestamp_tolerance_ms": 500,
+  "minimum_speech_coverage_ratio": 0.98,
+  "maximum_uncovered_speech_run_ms": 1500
+}

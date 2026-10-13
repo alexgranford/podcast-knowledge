@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "silero-vad",
+  "upstream_package_version": "6.2.1",
+  "upstream_repository": "https://github.com/snakers4/silero-vad",
+  "upstream_wheel_url": "https://files.pythonhosted.org/packages/0b/2b/48566f29a8b53d856ceb1994f209122749b3fda0a733a07e82047257de7a/silero_vad-6.2.1-py3-none-any.whl",
+  "upstream_wheel_sha256": "09de93c4d874bb19c53e62a47dd38be5f163cedad2b5599583231f2a84ef79cb",
+  "model_member": "silero_vad/data/silero_vad.onnx",
+  "model_path": "assets/silero-vad/6.2.1/model.onnx",
+  "model_sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+  "license": "MIT",
+  "license_path": "assets/silero-vad/6.2.1/LICENSE",
+  "runtime": {
+    "python": "3.13.5",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.2",
+    "note": "Create this venv yourself; its path comes from PODNOTE_VAD_RUNTIME. Versions above are those the bundled model was verified against."
+  }
+}

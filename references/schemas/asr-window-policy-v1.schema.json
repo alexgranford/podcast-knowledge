@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "asr-window-policy-v1.schema.json",
+  "title": "Podcast Knowledge ASR window policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "detector", "detector_parameters", "target_window_ms", "search_before_ms",
+    "search_after_ms", "minimum_silence_ms", "boundary_guard_ms",
+    "hard_max_window_ms", "timestamp_tolerance_ms",
+    "minimum_speech_coverage_ratio", "maximum_uncovered_speech_run_ms"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "detector": {"const": "silero-vad"},
+    "detector_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_samples", "threshold", "negative_threshold", "min_speech_duration_ms", "min_silence_duration_ms", "speech_pad_ms"],
+      "properties": {
+        "frame_samples": {"const": 512},
+        "threshold": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "negative_threshold": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "min_speech_duration_ms": {"type": "integer", "minimum": 32, "maximum": 5000},
+        "min_silence_duration_ms": {"type": "integer", "minimum": 32, "maximum": 5000},
+        "speech_pad_ms": {"type": "integer", "minimum": 0, "maximum": 1000}
+      }
+    },
+    "target_window_ms": {"type": "integer", "minimum": 60000, "maximum": 1800000},
+    "search_before_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+    "search_after_ms": {"type": "integer", "minimum": 0, "maximum": 600000},
+    "minimum_silence_ms": {"type": "integer", "minimum": 100, "maximum": 10000},
+    "boundary_guard_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
+    "hard_max_window_ms": {"type": "integer", "minimum": 60000, "maximum": 3600000},
+    "timestamp_tolerance_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
+    "minimum_speech_coverage_ratio": {"type": "number", "minimum": 0.9, "maximum": 1.0},
+    "maximum_uncovered_speech_run_ms": {"type": "integer", "minimum": 0, "maximum": 10000}
+  }
+}

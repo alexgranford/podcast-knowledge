@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "podnote/ordered-transcript-v1.schema.json",
+  "title": "Ordered raw transcript v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "status", "source", "model", "language", "duration_seconds", "audio_sha256", "chunks"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "job_id": {"type": "string", "pattern": "^podcast-[A-Za-z0-9._-]+$"},
+    "status": {"const": "complete"},
+    "source": {"enum": ["publisher", "apple_ttml", "omlx_asr", "fixture"]},
+    "model": {"type": ["string", "null"]},
+    "language": {"type": "string", "minLength": 2},
+    "duration_seconds": {"type": "integer", "minimum": 0},
+    "audio_sha256": {"type": ["string", "null"], "pattern": "^[a-fA-F0-9]{64}$"},
+    "chunks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "speaker", "text", "confidence"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "speaker": {"type": ["string", "null"]},
+          "text": {"type": "string", "minLength": 1},
+          "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  }
+}
