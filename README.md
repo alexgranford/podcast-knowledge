@@ -11,6 +11,23 @@ podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
   STATUS: complete
 ```
 
+## Quick start
+
+1. A Mac with Apple Silicon (24 GB) runs [oMLX](https://github.com/jundot/omlx) with
+   `Qwen3-ASR-1.7B-8bit` and `gemma-4-26B-A4B-it-qat-4bit`, and an API key.
+2. On the machine that runs the scripts (Python 3.11+, `ffmpeg`):
+   ```bash
+   git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
+   python3 -m pip install -r requirements.txt
+   cp .env.example .env && chmod 600 .env       # set OMLX_BASE_URL, OMLX_API_KEY, PODNOTE_ROOT
+   python3 scripts/setup_vad.py                 # the speech-detection runtime
+   python3 scripts/podnote.py "<an Apple Podcasts episode link>"
+   ```
+3. Under Hermes, follow "Running under Hermes" instead of step 2's `.env`: the settings go in
+   Hermes's `.env`, and three cron jobs run the queue, the show monitor and a weekly digest.
+
+The rest of this file explains the design, the setup in detail, operations and the output.
+
 ## Why it is shaped like this
 
 A small local model reads 2,000 words carefully and 30,000 words badly. So every model call is kept
@@ -22,8 +39,9 @@ small, and Python does everything a model does not need to do. The rules:
   folded into the last part, so the last part can reach ~2,250 words. Larger parts were tested and
   lose detail steadily.
 - **The note is built from the part notes, never from the transcript.** Two short calls over them
-  write the themes and then the summary. If the themes call fails, the part notes go into the note
-  as they stand, so one bad call never costs the episode.
+  write the themes and then the summary. If any call fails, no note is written and the old one stays:
+  a partial note is a failure. The finished part notes stay cached, so the next run redoes only what
+  failed.
 - **References are assembled by Python**, not by a model: the parts' tagged works and quotes,
   de-duplicated, in episode order. They are raw — titles and quotes come from automatic
   transcription — and are cleaned by the separate validation pass.
@@ -195,6 +213,7 @@ Configuration is environment variables; the model server's address and key are r
 | `PODNOTE_CACHE` | `/var/tmp/podnote` | job working directory (audio, transcript, part notes) |
 | `PODNOTE_STATE` | `/var/tmp/podnote-state` | queue, show registry, monitor state, logs, locks and the ASR database |
 | `PODNOTE_VAD_RUNTIME` | `/var/lib/podnote/vad-runtime` | VAD venv and readiness record |
+| `PODNOTE_KEEP_DAYS` | `30` | days an episode's transcript and working files are kept after their last use (audio goes as soon as the transcript is complete) |
 | `PODNOTE_SECTION_WORDS` | `1800` | transcript words per part; for experiments |
 | `PODNOTE_BASE_URL`, `PODNOTE_API_KEY` | — | optional: write notes with any OpenAI-compatible service instead of local oMLX (speech recognition still needs oMLX) |
 | `PODNOTE_BRAVE_API_KEY` | — | optional: web search (Brave Search API) for claim evidence and the names of cited books |
@@ -304,7 +323,18 @@ link arrives on Telegram); `podqueue.py list` shows it. Files in `PODNOTE_STATE`
 An episode that could not be processed — not indexed by Apple yet, model server unreachable, ASR
 busy — is retried 1, 3, 6 and 12 hours after its first failure, then reported as failed. Another
 podnote run holding the lock is not a failure; the link just waits. An incomplete note is a failure
-(the old note stays), reported at once.
+(the old note stays), reported at once. A verification pass that fails (a source or the model was
+unavailable) is retried on its own, without remaking the note, on the same schedule
+(`verify-retry.json`); this is silent on Telegram and logged in `done.txt` or `failed.txt`. A run that
+dies mid-way (a timeout or a crash) has the models it left loaded on the server unloaded.
+
+**Cache.** Each episode's working folder (`PODNOTE_CACHE/jobs/podcast-<id>/`) keeps the transcript,
+the part notes and the processing records. The audio (the download and the cut windows) is deleted as
+soon as the transcript is complete; the folder itself goes once it has not been used (transcribed,
+written or verified) for `PODNOTE_KEEP_DAYS` days, 30 by default. The queue does this at most once a
+day (`cache-cleanup.log`); episodes in the queue are left alone, and the notes are never touched.
+Re-making a note from a kept transcript needs no download; after the folder has gone, the episode is
+downloaded and transcribed again.
 
 **Ideas.** Part notes tag named theories, principles, laws, effects, paradoxes, fallacies, biases,
 thought experiments, models, ideologies and doctrines (`[idea]`). The validation pass keeps an idea when
@@ -375,7 +405,8 @@ The note gets References grouped by type (Books as a table with Open Library lin
 Papers & reports, Laws, Other works, Ideas linked to Wikipedia, Quotes as callouts), a **Claims checked** table with source
 footnotes and a collapsed verification log. What the pass did is recorded in the job folder
 (`verify-record.json`), not in the note's properties. A note already verified (same fingerprint) is
-skipped; regenerate it with podnote to verify again.
+skipped; regenerate it with podnote to verify again. A claim's verdict reads "Supported by sources" or
+"Disputed": it says what the gathered evidence shows, not that the claim is true.
 
 Web search is one service, Brave Search (its own index; at most one request a second), used for
 claim evidence and for naming books: about 4 claim queries and 2–3 book queries per episode. One
@@ -429,7 +460,7 @@ source_url / apple_episode_id / duration   # the podcast profile's fields; durat
   written either. Completion (skill version, note path, fingerprint) is recorded only after the write.
 - The verification pass fails openly (exit 1, `STOPPED:`) when it has no model, a model call fails, the
   check rejects its result, or the note changed while it ran; it is then retried, never marked verified.
-- Unknown values are left out, never written empty. A note with a gap shows an "Incomplete" callout.
+- Unknown values are left out, never written empty.
 - One note per episode: every other copy of the episode (older titles, restored files) goes to
   `<state>/superseded-notes/`; a different episode with the same file name gets its Apple id appended.
 - `Shows.md` is a script's note: `origin: agent`, `created`, `updated`, the tag `PODNOTE_SCRIPT_TAG` plus any
@@ -493,7 +524,7 @@ duration: 4637
 - **Lead-in** — one point per bullet, with who made it; `named concepts` in code style
 
 ## Claims checked
-| Claim | Who | Verdict | Sources |      ✅ supported · ⚠️ disputed (claims without a verdict are left out; no section when none has one)
+| Claim | Who | Verdict | Sources |      ✅ supported by sources · ⚠️ disputed (claims without a verdict are left out; no section when none has one)
 
 ## References
 ### Books              table: title, author, cited for, Open Library link
@@ -537,8 +568,39 @@ as ordinary Apple episode links. Up to 10 at once; more are listed and queued on
 - Long episodes simply produce more parts. There is no overflow path and none is needed.
 - Part notes are a working artefact kept in the job directory, not part of the note.
 - The ASR model stays loaded between transcription windows; a finished synthesis session unloads
-  every model. If a run crashes between the two, the ASR model can stay loaded on the server.
-  `model_arbiter.reconcile()` clears that, but nothing calls it automatically.
+  every model. If a run crashes between the two, the queue unloads what it left
+  (`model_arbiter.reconcile()`); a crashed run started by hand needs that call by hand.
+
+## Network and disk
+
+Per episode, roughly:
+
+| what | volume |
+| --- | --- |
+| Apple and the feed | 2–4 lookups and the RSS feed (cached per show); the audio once (50–150 MB, deleted after transcription) |
+| model server | one ASR call per window (about 15 minutes of audio each), then one call per transcript part (about 1,800 words), themes, summary and tags; then the validation pass: three calls, plus one per cited book and one per disputed claim |
+| Brave Search | about 4 queries for claims and 2–3 for books, at most one a second (optional) |
+| Wikipedia, Wikidata | at most about 65 calls per validation pass, one rate budget, with a contact address in the User-Agent |
+| Open Library, OpenAlex | a few calls per cited book or paper; Open Library spaced 0.35 s apart |
+| disk | while transcribing, the audio and its windows (a few hundred MB); afterwards about 0.5–1 MB of text per episode, kept `PODNOTE_KEEP_DAYS` days |
+
+Network addresses from feeds and redirects must be public: anything on the home network (loopback,
+private, link-local) is refused, so a feed cannot be used to reach other machines on it.
+
+## Troubleshooting
+
+| symptom | likely cause | what to do |
+| --- | --- | --- |
+| `STOPPED: … not indexed` | Apple has not listed the episode yet | nothing: the queue retries at 1, 3, 6 and 12 hours |
+| `STOPPED: model server unreachable …` | oMLX down or asleep, wrong `OMLX_BASE_URL` | start oMLX; the queue retries |
+| a model stays loaded after a crash | a run died between the ASR and text sessions | the queue unloads it; by hand: `model_arbiter.reconcile()` |
+| `VAD runtime readiness/hash validation failed` | an update changed the VAD script, model or policy | `python3 scripts/setup_vad.py` |
+| `Audio server returned HTTP 403` after a retry | the host's signed audio link expired | handled once automatically; if it persists the episode was withdrawn |
+| `STOPPED: note incomplete: …` | a model call was cut off or failed | run again: finished parts are cached; the old note stays meanwhile |
+| `STOPPED: note fails the metadata check: …` | the notes folder's standard rejects a property | see the listed codes; `notecheck.py` or your `_meta` validator |
+| a note was not verified | a source or the model was unavailable | retried automatically; by hand: `scripts/podverify.py "<note>"` |
+| an episode sits in the queue | a retry is pending, or another run holds the lock | `scripts/podqueue.py list` shows when it is due |
+| the cache grows | normal while transcribing | audio goes after each transcript; folders after `PODNOTE_KEEP_DAYS` |
 
 ## Layout
 
@@ -548,6 +610,8 @@ scripts/podqueue.py             queue of episode links in front of podnote (Herm
 scripts/podmonitor.py           monitored shows -> new episodes -> queue (Hermes cron)
 scripts/podshows.py             show registry: hosts, publishers, fixes, advertisers; Shows.md overview
 scripts/podverify.py            external validation of names, works, quotes and claims
+scripts/note_prompts.py         the prompts podnote sends (part notes, themes, summary, tags)
+scripts/verify_prompts.py       the prompts the validation pass sends
 scripts/podsearch.py            queue a show's episodes whose titles match a phrase
 scripts/notecheck.py            the basic note check (when the notes folder has no standard of its own)
 scripts/podfetch.py             Apple Podcasts URL → RSS → audio URL
@@ -568,6 +632,7 @@ references/                     window and state policies, JSON schemas
 assets/silero-vad/              the bundled Silero VAD model (MIT)
 requirements*.txt               packages: scripts, speech-detection venv, tests
 tests/                          python3 -m pytest -q tests (invented data; no model server needed)
+.github/workflows/tests.yml     runs the tests on every push
 ```
 
 ## License

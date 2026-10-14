@@ -1,7 +1,7 @@
 ---
 name: podcast-knowledge
 description: Use when the user gives an Apple Podcasts episode URL and wants a knowledge note (Markdown, for example in an Obsidian vault).
-version: 5.20.0
+version: 5.21.0
 required_environment_variables:
   - name: OMLX_BASE_URL
     prompt: Address of the model server (oMLX or any OpenAI-compatible server), e.g. http://<host>:8000

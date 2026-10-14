@@ -100,3 +100,22 @@ class UnitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class FeedGuardTests(unittest.TestCase):
+    """A feed address comes from the podcast's publisher: it must not reach the home network."""
+
+    def resolving_to(self, address):
+        return mock.patch.object(podfetch.socket, "getaddrinfo",
+                                 return_value=[(2, 1, 6, "", (address, 443))])
+
+    def test_private_and_loopback_addresses_are_refused(self):
+        for address in ("127.0.0.1", "172.20.50.20", "10.0.0.5", "169.254.169.254", "::1"):
+            with self.resolving_to(address), self.assertRaises(ValueError):
+                podfetch.http_get("https://feeds.example.org/show.xml")
+        with self.resolving_to("93.184.216.34"):
+            podfetch._validate_http_url("http://feeds.example.org/show.xml")     # public, plain HTTP: fine
+
+    def test_a_redirect_to_the_home_network_is_refused(self):
+        with self.resolving_to("172.20.50.20"), self.assertRaises(ValueError):
+            podfetch._PublicRedirects().redirect_request(None, None, 302, "Found", {}, "http://router.example/admin")

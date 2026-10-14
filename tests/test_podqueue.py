@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -190,3 +191,97 @@ class PlainReasonTests(unittest.TestCase):
                          say("note incomplete: section 3 (0:24:17): length"))
         self.assertEqual("Hermes is missing the Python package jsonschema.", say("ModuleNotFoundError: No module named 'jsonschema'"))
         self.assertEqual("Something new went wrong", say("Traceback\nSomething new went wrong"))
+
+
+class CacheCleanupTests(QueueTestCase):
+
+    def job(self, episode: str, days_old: float, transcript: bool = True) -> Path:
+        root = podqueue.CACHE / "jobs" / f"podcast-{episode}"
+        (root / "asr" / "windows").mkdir(parents=True)
+        (root / "source").mkdir()
+        (root / "source" / "episode-audio").write_bytes(b"a" * 1000)
+        (root / "asr" / "windows" / "window-0001.wav").write_bytes(b"w" * 500)
+        if transcript:
+            (root / "asr" / "transcript-v1.json").write_text("{}")
+        stamp = self.clock.timestamp() - days_old * 86400
+        for path in [*root.rglob("*"), root]:
+            os.utime(path, (stamp, stamp))
+        return root
+
+    def test_audio_goes_at_once_and_old_folders_after_a_month(self):
+        recent, old, queued, unfinished = (self.job("1000000000011", 2), self.job("1000000000012", 40),
+                                           self.job("1000000000001", 40), self.job("1000000000013", 2, transcript=False))
+        line = podqueue.clean_cache([EP1])                              # EP1 is episode 1000000000001
+        self.assertFalse((recent / "source" / "episode-audio").exists())
+        self.assertFalse(list(recent.rglob("*.wav")))
+        self.assertTrue((recent / "asr" / "transcript-v1.json").is_file())     # the transcript stays a month
+        self.assertFalse(old.exists())                                  # unused for 40 days: gone
+        self.assertTrue((queued / "source" / "episode-audio").exists())         # in the queue: left alone
+        self.assertTrue((unfinished / "source" / "episode-audio").exists())     # not transcribed yet: needed
+        self.assertIn("removed 1 episode folders", line)
+        self.assertEqual("", podqueue.clean_cache([EP1]))               # at most once a day
+        self.clock += timedelta(days=1, minutes=1)
+        self.assertNotEqual("", podqueue.clean_cache([EP1]))
+
+
+class VerificationRetryTests(QueueTestCase):
+
+    def retries(self) -> dict:
+        path = self.state / "verify-retry.json"
+        return json.loads(path.read_text()) if path.is_file() else {}
+
+    def test_a_failed_verification_is_retried_on_its_own_and_then_given_up(self):
+        self.state.mkdir(parents=True, exist_ok=True)
+        note = self.notes / "Episodes" / "n.md"
+        note.write_text("---\n---\n")
+        podqueue.schedule_verification(str(note))
+        self.assertEqual(1, self.retries()[str(note)]["tries"])
+        with mock.patch.object(podqueue, "run_verify", return_value="verification failed: x") as qa:
+            podqueue.retry_verification()
+            qa.assert_not_called()                                      # not due for an hour
+            for tries in range(2, 5):
+                self.clock += timedelta(hours=13)
+                podqueue.retry_verification()
+                self.assertEqual(tries, self.retries()[str(note)]["tries"])
+            self.clock += timedelta(hours=13)
+            podqueue.retry_verification()
+        self.assertEqual({}, self.retries())                            # four retries, then given up
+        self.assertIn("verification\tgave up after 4 retries", (self.state / "failed.txt").read_text())
+
+    def test_a_retry_that_works_is_recorded_silently(self):
+        self.state.mkdir(parents=True, exist_ok=True)
+        note = self.notes / "Episodes" / "n.md"
+        note.write_text("---\n---\n")
+        podqueue.schedule_verification(str(note))
+        self.clock += timedelta(hours=2)
+        with mock.patch.object(podqueue, "run_verify", return_value="verified: 1 fix, 2 claims checked"), \
+                mock.patch.object(podqueue, "refresh_show"):
+            self.assertEqual("", podqueue.run())                        # idle tick: nothing on Telegram
+        self.assertEqual({}, self.retries())
+        self.assertIn("verification retry\tverified: 1 fix", (self.state / "done.txt").read_text())
+
+    def test_a_fresh_note_whose_verification_fails_is_scheduled(self):
+        podqueue.add(EP1)
+        note = self.notes / "Episodes" / "Show" / "2026-10-07 - Ep.md"
+        note.parent.mkdir(parents=True)
+        note.write_text('---\nepisode: "Ep"\n---\n# Ep\n')
+        with mock.patch.object(podqueue, "run_podnote", return_value=(0, f"NOTE: {note}\nSTATUS: complete")), \
+                mock.patch.object(podqueue, "run_verify", return_value="verification timed out"), \
+                mock.patch.object(podqueue, "refresh_show"):
+            message = podqueue.run()
+        self.assertTrue(message.startswith("🟢"))                        # the note is delivered as ever
+        self.assertIn(str(note), self.retries())
+
+
+class ModelReleaseTests(QueueTestCase):
+
+    def test_models_are_released_only_after_a_run_died(self):
+        for link in (EP1, EP2, EP2.replace("002", "003")):              # one episode per run below
+            podqueue.add(link)
+        with mock.patch.object(podqueue, "release_models") as release:
+            self.run_with(1, "STOPPED: podnote timed out after 40 minutes")
+            self.assertEqual(1, release.call_count)
+            self.run_with(1, "Traceback (most recent call last):\nKeyError: 'x'")   # a crash, no STOPPED line
+            self.assertEqual(2, release.call_count)
+            self.run_with(1, "STOPPED: model server unreachable at section 2: refused")   # an ordinary stop
+            self.assertEqual(2, release.call_count)

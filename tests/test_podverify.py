@@ -159,7 +159,7 @@ class VerifyTests(unittest.TestCase):
         self.assertNotIn("Nothing like this was ever said", text.split("Verification log")[0])
         # claims: disputed claim without cited evidence is not checkable; supported one has a footnote
         self.assertIn("## Claims checked\n\n| Claim | Who | Verdict | Sources |", text)
-        self.assertIn("| The city's cycling ratio was 1 to 1.4 | Tobias Marlow | ✅ Supported — matches the cited figure | [^1] |", text)
+        self.assertIn("| The city's cycling ratio was 1 to 1.4 | Tobias Marlow | ✅ Supported by sources — matches the cited figure | [^1] |", text)
         self.assertNotIn("could not be checked", text)
         self.assertNotIn("The council owns half of the parks", text)            # unchecked claims are left out entirely
         self.assertIn("[^1]: [Source on The city's cycling r](https://example.org/a) — 1 to 1.4", text)

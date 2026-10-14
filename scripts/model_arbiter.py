@@ -15,7 +15,6 @@ from pathlib import Path
 import omlx_text
 
 DEFAULT_STATE = Path(os.environ.get("PODNOTE_CACHE", "/var/tmp/podnote")) / "state"
-ACTIVE_ASR_STATES = {"queued", "submitting", "running", "result_ready"}
 
 
 def now() -> str:
@@ -33,17 +32,6 @@ def atomic_json(path: Path, value: dict) -> None:
         try: os.unlink(temporary)
         except FileNotFoundError: pass
         raise
-
-
-def asr_is_active(state_root: str | Path = DEFAULT_STATE) -> bool:
-    jobs = Path(state_root) / "asr-jobs"
-    for path in jobs.glob("*.json") if jobs.is_dir() else []:
-        try:
-            if json.loads(path.read_text(encoding="utf-8")).get("status") in ACTIVE_ASR_STATES:
-                return True
-        except (OSError, ValueError):
-            return True
-    return False
 
 
 def lease_path(state_root: str | Path = DEFAULT_STATE) -> Path:
@@ -157,8 +145,6 @@ def local_model_session(
     lock = root / "omlx-model.lock"
     with lock.open("a+") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        if asr_is_active(root):
-            raise RuntimeError("ASR has priority; local preparation deferred")
         config = omlx_text.settings(base_url, model)
         lease = {"schema_version": 1, "owner": owner, "job_id": job_id, "operation": operation,
                  "requested_model": model, "created_at": now(), "expires_epoch": time.time() + lease_seconds,

@@ -293,7 +293,7 @@ class SynthesiseTests(NamesFileTestCase):
         with mock.patch.object(podnote, "MODEL", gemma):
             note, problems = self.run_with(FakeModel())
             shutil.rmtree(podnote.work_dir(self.root))                          # no cached answers for the next run
-            gap, _ = self.run_with(FakeModel(themes=("", "length")))
+            gap, gap_problems = self.run_with(FakeModel(themes=("", "length")))
             shutil.rmtree(podnote.work_dir(self.root))
             with mock.patch.object(podnote, "ask", FakeModel()), mock.patch.object(podnote, "log"):
                 remade, _ = podnote.synthesise(self.root, "http://model", {},
@@ -309,7 +309,7 @@ class SynthesiseTests(NamesFileTestCase):
         record = json.loads((self.root / "note-record.json").read_text())
         self.assertEqual((gemma, ["eclipses"]), (record["composed_by"], record["tag_suggestions"]))
         self.assertNotIn("skill_version", record)                             # stamped only once the note is written
-        self.assertIn("> [!warning] Incomplete", gap)                         # a gap is shown, not a status
+        self.assertEqual(["themes: length"], gap_problems)                    # a gap is a failure, never written
         # the model is the latest pass's; a start never recorded becomes now
         self.assertIn(f"model: {gemma}\n", remade)
         self.assertRegex(remade.split("---")[1], r'created: "\d{4}-')
@@ -406,6 +406,15 @@ class SynthesiseTests(NamesFileTestCase):
         self.assertFalse((work / "section-01.md").exists())
         self.assertEqual(1, len(list(work.parent.glob(work.name + "-stale-*"))))
 
+    def test_model_cache_from_another_part_size_is_set_aside(self):
+        with mock.patch.object(podnote, "log"):
+            work = podnote.fresh_work_dir(self.root)
+            (work / "section-01.md").write_text("notes on an 1,800-word part", encoding="utf-8")
+            with mock.patch.object(podnote, "SECTION_WORDS", 1200):          # same transcript, cut differently
+                work = podnote.fresh_work_dir(self.root)
+        self.assertFalse((work / "section-01.md").exists())
+        self.assertEqual(1, len(list(work.parent.glob(work.name + "-stale-*"))))
+
     def test_self_introductions_need_a_greeting_or_sign_off(self):
         chunks = {"chunks": [{"text": "Hello, everybody, and welcome to Off the Fence with me, Tomas Brandt, and my "
                               "co-host Felix Moreau. " + "words " * 1200
@@ -456,12 +465,11 @@ class SynthesiseTests(NamesFileTestCase):
         self.assertIn("(40 minutes, 1 parts)", model.prompts["themes"])
         self.assertIn("Aim for about 3 themes", model.prompts["themes"])
 
-    def test_failed_themes_fall_back_to_part_notes(self):
+    def test_failed_themes_are_a_problem_with_no_stand_in(self):
         note, problems = self.run_with(FakeModel(themes=("half a theme", "length")))
-        self.assertEqual(["themes: length"], problems)
-        self.assertIn("> [!warning] Incomplete\n> themes: length", note)
-        self.assertIn("### Part 1 (from ~0:00:00)", note)
-        self.assertIn("Daniel Okafor argues the eclipse is fragile.", note)
+        self.assertEqual(["themes: length"], problems)          # run() then writes nothing; the old note stays
+        self.assertNotIn("### Part 1", note)                    # no part notes passed off as themes
+        self.assertNotIn("Incomplete", note)
 
     def test_skipped_part_is_left_out(self):
         sentence = " ".join(["word"] * 99) + "."
@@ -547,3 +555,74 @@ class RegistryRoleTests(unittest.TestCase):
         self.assertEqual("Noam Weissman argues X. Noam Weissman's view is Y. A host country votes.\n> \"the host said so\"",
                          podnote.name_the_host(text, ["Noam Weissman"]))
         self.assertEqual(text, podnote.name_the_host(text, ["A", "B"]))      # two hosts: no guessing
+
+
+class AudioLifecycleTests(unittest.TestCase):
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name) / "podcast-1"
+        (self.root / "source").mkdir(parents=True)
+        (self.root / "asr" / "windows").mkdir(parents=True)
+
+    def test_audio_is_dropped_only_once_the_transcript_exists(self):
+        (self.root / "source" / "episode-audio").write_bytes(b"a" * 300)
+        (self.root / "asr" / "windows" / "window-0001.wav").write_bytes(b"w" * 200)
+        self.assertEqual(0, podnote.drop_audio(self.root))              # mid-transcription: still needed
+        (self.root / "asr" / "transcript-v1.json").write_text("{}")
+        self.assertEqual(500, podnote.drop_audio(self.root))
+        self.assertTrue((self.root / "asr" / "transcript-v1.json").is_file())
+        self.assertFalse((self.root / "source" / "episode-audio").exists())
+
+    def test_an_expired_audio_link_is_resolved_again_once(self):
+        import audio_acquisition
+        from types import SimpleNamespace
+        metadata_path = self.root / "source" / "resolved-episode-v1.json"
+        metadata = {"audio_url": "https://cdn.example/old.mp3?sig=expired"}
+        tried = []
+
+        def acquire(url, target):
+            tried.append(url)
+            if "expired" in url:
+                raise audio_acquisition.AudioError("Audio server returned HTTP 403")
+        fresh = SimpleNamespace(enclosure_url="https://cdn.example/new.mp3?sig=fresh")
+        with mock.patch.object(audio_acquisition, "acquire_audio", acquire), \
+                mock.patch("podfetch.refresh_enclosure_if_needed", return_value=fresh), mock.patch.object(podnote, "log"):
+            podnote.fetch_audio("https://podcasts.apple.com/us/podcast/id1?i=2", metadata, metadata_path,
+                                self.root / "source" / "episode-audio")
+        self.assertEqual(["https://cdn.example/old.mp3?sig=expired", "https://cdn.example/new.mp3?sig=fresh"], tried)
+        self.assertIn("sig=fresh", metadata_path.read_text())
+
+    def test_other_download_errors_are_not_retried(self):
+        import audio_acquisition
+        with mock.patch.object(audio_acquisition, "acquire_audio",
+                               side_effect=audio_acquisition.AudioTransientError("Audio server returned HTTP 503")), \
+                mock.patch("podfetch.refresh_enclosure_if_needed") as refresh, self.assertRaises(audio_acquisition.AudioError):
+            podnote.fetch_audio("u", {"audio_url": "https://cdn.example/a.mp3"}, self.root / "m.json", self.root / "a")
+        refresh.assert_not_called()
+
+
+class ModelOutputDriftTests(unittest.TestCase):
+    """The model's part notes vary in small ways; the references must come out the same."""
+
+    def test_reference_label_and_bullet_variants(self):
+        expected = ["[work] Cosmos (documentary) — cited by Okafor", '[quote] "Nothing is lost" — Okafor']
+        for label in ("**References:**", "References:", "### References", "**References**:", "References"):
+            for bullet in ("- ", "* ", "  - "):
+                notes = (f"**Topic:** eclipses\n- A point.\n\n{label}\n\n{bullet}{expected[0]}\n{bullet}{expected[1]}\n")
+                points, entries = podnote.split_references(notes)
+                self.assertEqual(expected, entries, (label, bullet))
+                self.assertNotIn("Cosmos", points)
+
+    def test_an_inline_first_entry_and_none_are_handled(self):
+        _, entries = podnote.split_references("- A point.\n**References:** [work] Cosmos (documentary) — on stars\n")
+        self.assertEqual(["[work] Cosmos (documentary) — on stars"], entries)
+        self.assertEqual([], podnote.split_references("- A point.\n**References:**\n- None.\n")[1])
+
+    def test_tags_in_any_case_are_read(self):
+        section = podnote.references_section(["[Work] Cosmos (documentary) — on stars", "[IDEA] Occam's razor — on simplicity",
+                                              "an untagged bullet"])
+        self.assertIn("Cosmos", section)
+        self.assertIn("Occam's razor", section)
+        self.assertNotIn("untagged", section)

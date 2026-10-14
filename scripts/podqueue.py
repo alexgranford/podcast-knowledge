@@ -11,8 +11,9 @@ there is nothing to report, one line per finished or failed episode otherwise (d
 Telegram by the cron job).
 
 Retries only for an episode that was not processed - Apple has not indexed it yet, the model server
-is unreachable, ASR has priority - at 1, 3, 6 and 12 hours after its first failure, then it is
-marked failed. Another podnote run holding the lock is not a failure: the link simply waits. A
+is unreachable, the model server is busy - at 1, 3, 6 and 12 hours after its first failure, then it is
+marked failed. A verification pass that fails is retried on its own on the same schedule, silently.
+A run that dies mid-way (a timeout or a crash) has the models it left on the server unloaded. Another podnote run holding the lock is not a failure: the link simply waits. A
 partial note is a failure (the old note stays). Anything else (audio, transcription, a bad link) fails at once.
 
 Files, all in PODNOTE_STATE:
@@ -42,6 +43,8 @@ import settings  # noqa: E402,F401  (importing it loads the project .env)
 import podfetch  # noqa: E402
 
 STATE = Path(os.environ.get("PODNOTE_STATE", "/var/tmp/podnote-state"))
+CACHE = Path(os.environ.get("PODNOTE_CACHE", "/var/tmp/podnote"))
+KEEP_DAYS = int(os.environ.get("PODNOTE_KEEP_DAYS", "30"))   # an episode's transcript and working files
 ROOT = Path(os.environ.get("PODNOTE_ROOT", str(Path.home() / "Notes")))
 EPISODES = Path(os.environ.get("PODNOTE_NOTES_DIR", "Podcasts"))
 PODNOTE = HERE / "podnote.py"
@@ -52,7 +55,7 @@ VERIFY_TIMEOUT = 15 * 60
 
 # STOPPED reasons that mean "not processed yet, try again later"
 RETRYABLE = re.compile(r"not indexed|has not indexed|unreachable|network|timed? ?out|connection|"
-                       r"ASR has priority|ASR slot is already active|model (load|unload)|oMLX health check|"
+                       r"ASR slot is already active|model (load|unload)|oMLX health check|"
                        r"temporar", re.I)
 BUSY = re.compile(r"another podnote run is active|ASR slot is already active", re.I)
 
@@ -180,11 +183,22 @@ def run_podnote(url: str) -> tuple[int, str]:
     return done if done is not None else (1, f"STOPPED: podnote timed out after {RUN_TIMEOUT // 60} minutes")
 
 
+def release_models() -> None:
+    """After a podcast job died mid-run, unload what it left loaded on the model server (only then: other
+    work on the server is not ours to unload)."""
+    try:
+        import model_arbiter
+        model_arbiter.reconcile(CACHE / "model-arbiter")
+    except Exception:
+        pass                                            # a server we cannot reach has nothing loaded by us
+
+
 def run_verify(note_path: str) -> str:
-    """The external validation pass over a fresh note; returns a short status for the message.
-    Never raises: the note is already delivered, so a verification problem is reported, not retried."""
+    """The external validation pass over a fresh note; returns a short status for the log. Never raises:
+    the note is already delivered; a failed pass is retried later on its own (retry_verification)."""
     done = run_owned([sys.executable, str(PODVERIFY), note_path], VERIFY_TIMEOUT)
     if done is None:
+        release_models()
         return "verification timed out"
     code, output = done
     if "already verified" in output:
@@ -194,6 +208,44 @@ def run_verify(note_path: str) -> str:
         return "verification failed: " + (output.strip().splitlines() or ["no output"])[-1][:120]
     changes, claims = int(found.group(1)), int(found.group(2))
     return f"verified: {changes} fix{'es' if changes != 1 else ''}, {claims} claim{'s' if claims != 1 else ''} checked"
+
+
+def verification_failed(status: str) -> bool:
+    return status.startswith(("verification failed", "verification timed out"))
+
+
+def schedule_verification(note_path: str, tries: int = 0) -> None:
+    """Try a failed verification pass again later (RETRY_HOURS after the first failure), without remaking
+    the note; after the last try it is logged in failed.txt. Never reported on Telegram."""
+    path = STATE / "verify-retry.json"
+    retries = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if tries >= len(RETRY_HOURS):
+        retries.pop(note_path, None)
+        append_line(STATE / "failed.txt", f"{iso(now())}\tverification\tgave up after {tries} retries\t{note_path}")
+    else:
+        retries[note_path] = {"tries": tries + 1, "next_try": iso(now() + timedelta(hours=RETRY_HOURS[tries]))}
+    atomic_write(path, json.dumps(retries, indent=2, sort_keys=True) + "\n")
+
+
+def retry_verification() -> None:
+    """One due verification retry, when the queue has no episode to run."""
+    path = STATE / "verify-retry.json"
+    retries = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    due = next((note for note, entry in sorted(retries.items()) if parse_iso(entry["next_try"]) <= now()), None)
+    if due is None:
+        return
+    if not Path(due).is_file():                         # re-made or removed since: nothing to verify
+        retries.pop(due)
+        atomic_write(path, json.dumps(retries, indent=2, sort_keys=True) + "\n")
+        return
+    result = run_verify(due)
+    if verification_failed(result):
+        schedule_verification(due, retries[due]["tries"])
+        return
+    retries.pop(due)
+    atomic_write(path, json.dumps(retries, indent=2, sort_keys=True) + "\n")
+    append_line(STATE / "done.txt", f"{iso(now())}\tverification retry\t{result}\t{Path(due).stem}")
+    refresh_show(due)
 
 
 def refresh_show(note_path: str) -> None:
@@ -284,6 +336,36 @@ def line_after(prefix: str, output: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def clean_cache(queue: list[str], today: datetime | None = None) -> str:
+    """Keep the cache small, at most once a day: an episode's audio goes once its transcript is
+    complete, and its whole working folder (transcript, part notes, records) once it has not been
+    used for KEEP_DAYS (transcribed, written or verified). Episodes in the queue are left alone; the
+    notes are never touched. Returns a one-line summary for the log ("" when it did not run)."""
+    today = today or now()
+    stamp = STATE / "cache-cleaned"
+    if stamp.is_file() and today - parse_iso(stamp.read_text().strip()) < timedelta(days=1):
+        return ""
+    import shutil
+    import podnote
+    queued = {f"podcast-{episode}" for episode in map(episode_id_or_none, queue) if episode}
+    removed, freed = 0, 0
+    for job in sorted((CACHE / "jobs").glob("podcast-*")) if (CACHE / "jobs").is_dir() else []:
+        if job.name in queued or not job.is_dir():
+            continue
+        used = [p.stat().st_mtime for p in (job / "asr" / "transcript-v1.json", job / "note-record.json",
+                                            job / "verify-record.json") if p.is_file()] or [job.stat().st_mtime]
+        if today - datetime.fromtimestamp(max(used), timezone.utc) > timedelta(days=KEEP_DAYS):
+            freed += sum(p.stat().st_size for p in job.rglob("*") if p.is_file())
+            shutil.rmtree(job, ignore_errors=True)
+            removed += 1
+        else:
+            freed += podnote.drop_audio(job)
+    atomic_write(stamp, iso(today) + "\n")
+    line = f"{iso(today)}\tremoved {removed} episode folders older than {KEEP_DAYS} days\tfreed {freed / 1e9:.1f} GB"
+    append_line(STATE / "cache-cleanup.log", line)
+    return line
+
+
 def run() -> str:
     """Process the next due link. Returns the message to deliver, or "" for nothing to report."""
     STATE.mkdir(parents=True, exist_ok=True)
@@ -294,9 +376,16 @@ def run() -> str:
             return ""                                   # the previous tick is still working
         with queue_lock():
             queue, state = read_lines(STATE / "queue.txt"), load_state()
+        try:
+            clean_cache(queue)                          # silent: it only writes cache-cleanup.log
+        except OSError:
+            pass                                        # a cleanup problem never stops the queue
+        with queue_lock():
+            queue, state = read_lines(STATE / "queue.txt"), load_state()
             due = next((url for url in queue
                         if parse_iso(state.get(url, {}).get("next_try", "1970-01-01T00:00:00Z")) <= now()), None)
         if due is None:
+            retry_verification()                        # idle tick: a failed verification may be due again
             return ""
 
         code, output = run_podnote(due)
@@ -304,7 +393,11 @@ def run() -> str:
         note = Path(note_path).stem if note_path else ""
         status = line_after("STATUS:", output)
         stopped = line_after("STOPPED:", output)
+        if stopped.startswith("podnote timed out") or (code and not stopped):
+            release_models()                            # it died mid-run: unload what it left on the server
         qa_status = run_verify(note_path) if note_path else ""
+        if verification_failed(qa_status):
+            schedule_verification(note_path)
         if note_path:
             refresh_show(note_path)
 

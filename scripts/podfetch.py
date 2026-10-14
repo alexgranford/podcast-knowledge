@@ -12,9 +12,11 @@ from __future__ import annotations
 import difflib
 import hashlib
 import html
+import ipaddress
 import json
 import os
 import re
+import socket
 import tempfile
 import unicodedata
 import urllib.error
@@ -108,11 +110,32 @@ class AppleEpisodeHint:
 
 
 def _validate_http_url(url: str) -> None:
+    """HTTP(S), no credentials, and a host on the public internet: a feed address comes from whoever
+    publishes the podcast, so it must not reach the home network (loopback, private, link-local)."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"Unsupported URL: {url}")
     if parsed.username or parsed.password:
         raise ValueError("Credentials in URLs are not allowed")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                                       type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return                                          # unresolvable: the request fails as a network error
+    for address in addresses:
+        if not ipaddress.ip_address(address[4][0].split("%", 1)[0]).is_global:
+            raise ValueError(f"Refusing a non-public address: {parsed.hostname}")
+
+
+class _PublicRedirects(urllib.request.HTTPRedirectHandler):
+    """Every redirect target passes the same check as the first address."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_PublicRedirects)
 
 
 def http_get(
@@ -133,7 +156,7 @@ def http_get(
     if modified:
         request.add_header("If-Modified-Since", modified)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _OPENER.open(request, timeout=timeout) as response:
             declared = response.headers.get("Content-Length")
             if declared and int(declared) > max_bytes:
                 raise ValueError(f"Response exceeds {max_bytes} bytes: {url}")
@@ -154,7 +177,7 @@ def probe_audio_url(url: str, timeout: int = 20) -> dict:
         url,
         headers={"User-Agent": USER_AGENT, "Range": "bytes=0-63"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OPENER.open(request, timeout=timeout) as response:
         prefix = response.read(64)
         content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
         media_signature = (

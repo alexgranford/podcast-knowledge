@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import settings  # noqa: F401,E402  (importing it loads .env)
 import podnote  # noqa: E402
+import podqueue  # noqa: E402
 import podshows  # noqa: E402
 
 # A notes folder's own metadata standard (its _meta folder) to test against, if you have one; else the
@@ -20,7 +21,7 @@ TEST_TAGS = ["science", "astronomy", "history", "ai", "overview", "script-made"]
 
 @pytest.fixture(autouse=True)
 def private_registry(tmp_path, monkeypatch):
-    """Every test gets an empty show registry and a notes folder of its own; tests may still patch them."""
+    """Every test gets an empty show registry, a notes folder and a cache of its own; tests may still patch them."""
     root = tmp_path / "notes"
     rules = root / "_meta"
     if (LIVE_RULES / "tools" / "metadata_contract.py").is_file():
@@ -35,6 +36,8 @@ def private_registry(tmp_path, monkeypatch):
                            ("tag-vocabulary.json", {"canonical_tags": TEST_TAGS})):
             (rules / name).write_text(json.dumps(data))
     monkeypatch.setattr(podshows, "STATE", tmp_path / "registry-state")
+    for module in (podnote, podqueue):                      # never the real cache: the queue cleans it
+        monkeypatch.setattr(module, "CACHE", tmp_path / "cache")
     monkeypatch.setattr(podshows, "ROOT", root)
     monkeypatch.setattr(podnote, "ROOT", root)
     monkeypatch.setattr(podnote, "SCRIPT_TAG", os.environ.get("PODNOTE_SCRIPT_TAG") or "script-made")   # the folder's marker
