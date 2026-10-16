@@ -82,18 +82,33 @@ speech-recognition layer.
 
 ## How it fits together
 
-```
-  chat (any channel your agent uses) ──► agent: queues episode links, schedules the jobs
-                                              │
-                          podqueue.py ──► podnote.py ──► podverify.py
-                                              │               │
-             Apple Podcasts: lookup, feed, audio ◄─┤               ├──► Wikipedia · Wikidata · Open Library · OpenAlex
-                                              │               └──► Brave Search (optional key)
-                                              ▼
-                           model server: speech-recognition model + text model
-                                              │
-                                              ▼
-                        notes folder (Markdown; for example an Obsidian vault)
+Dashed boxes are optional.
+
+```mermaid
+flowchart LR
+    you(["You"])
+    chat["Chat channel<br/>Telegram · WhatsApp · Discord<br/>Signal · API"]
+    agent["Hermes agent<br/>queues links · runs the schedule<br/>sends updates"]
+    skill["podcast-knowledge<br/>queue · transcribe<br/>write · validate"]
+    models["Model server<br/>speech model + text model<br/>oMLX · Ollama · LM Studio<br/>vLLM · a hosted API"]
+    subgraph online["Online sources"]
+        direction TB
+        apple[("Apple Podcasts<br/>catalogue · feeds · audio")]
+        refs[("Wikipedia · Wikidata<br/>Open Library · OpenAlex")]
+        brave[("Brave Search<br/>optional")]
+    end
+    notes[("Notes folder<br/>Markdown · Obsidian vault")]
+    devices["Your devices<br/>any sync"]
+
+    you -- "episode link" --> chat --> agent --> skill
+    agent -. "note ready" .-> chat
+    skill <--> models
+    skill --> online
+    skill --> notes
+    notes -.-> devices
+
+    classDef optional stroke-dasharray: 5 5
+    class chat,agent,brave,devices optional
 ```
 
 | component | role | required |
@@ -541,9 +556,19 @@ works where the registry knows no hosts, but the registry is the place for them.
 
 ## What it produces
 
-An unedited excerpt of a real note, made from a one-hour episode of *The Rest Is Science* ("Why Do We
-Like Staring Into Fire?") on the reference setup. `…` marks what was left out: four more themes,
-a second checked claim, further ideas and the remaining footnotes.
+An excerpt of a real note, made from a one-hour episode of *The Rest Is Science* ("Why Do We Like
+Staring Into Fire?") on the reference setup, rendered in Obsidian's style. Four more themes, a second
+checked claim, further ideas and the footnotes are left out; nothing else is edited.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/example-note-dark.png">
+    <img alt="A podcast-knowledge note: properties, summary with participants, a key theme with its points, a checked claim and linked ideas" src="docs/images/example-note-light.png" width="760">
+  </picture>
+</p>
+
+<details>
+<summary>The same excerpt as Markdown</summary>
 
 ```markdown
 ---
@@ -605,6 +630,8 @@ duration: 3684
 
 [^1]: ['It is the most exciting discovery in my 40-year career': Archaeologists uncover evidence that Neanderthals made fire 400,000 years ago in England / Live Science](https://www.livescience.com/archaeology/human-evolution/it-is-the-most-exciting-discovery-in-my-40-year-career-archaeologists-uncover-evidence-that-neanderthals-made-fire-400-000-years-ago-in-england) — Flecks of pyrite found at a more than 400,000-year-old archaeological site in Suffolk, in eastern England, push back archaeologists' evidence for controlled fir
 ```
+
+</details>
 
 Every note has the same parts:
 
@@ -716,6 +743,7 @@ assets/silero-vad/              the bundled Silero VAD model (MIT)
 requirements*.txt               packages: scripts, speech-detection venv, tests
 tests/                          python3 -m pytest -q tests (invented data; no model server needed)
 .github/workflows/tests.yml     runs the tests on every push
+docs/images/                    the example note, rendered (light and dark)
 ```
 
 ## License
