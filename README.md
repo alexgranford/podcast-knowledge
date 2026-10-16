@@ -40,11 +40,10 @@ podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
 
 ## What it produces
 
-An excerpt of a real note, made from a one-hour episode of *The Rest Is Science*,
+Here is part of a real note, made from an episode of *The Rest Is Science*,
 ["Why Do We Like Staring Into Fire?"](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284),
-with [Hannah Fry](https://x.com/FryRsquared) and [Michael Stevens](https://x.com/tweetsauce), on the
-24 GB reference setup (see "Models") and shown in Obsidian's style. Four more themes, a second checked
-claim, further ideas and the footnotes are left out; nothing else is edited.
+with [Hannah Fry](https://x.com/FryRsquared) and [Michael Stevens](https://x.com/tweetsauce): an hour
+of conversation, ready to read in a few minutes.
 
 <p align="center">
   <picture>
@@ -82,6 +81,59 @@ duration: 3684
 > Fire is a complex chemical process rather than a single substance, playing a fundamental role in both human evolutionary history and modern psychological attention.
 >
 > Combustion is defined as a self-perpetuating chemical reaction involving the fire tetrahedron of fuel, heat, oxygen, and chemical reactions. Flames emit light through chemiluminescence and black body radiation, with colors changing based on temperature and oxygen levels. Historically, the control and intentional making of fire likely facilitated human cooperation and social structures. While fire provides "soft fascination" that allows for cognitive restoration and social readiness, modern digital stimulation often imposes a "hard fascination" that can block creative thinking and diminish the communal, nurturing experiences found in nature.
+
+## Key themes
+
+### The nature and mechanics of combustion
+> Fire is described as a self-perpetuating chemical process rather than a single substance or phase of matter. It is defined by the `fire tetrahedron`, which expands upon the traditional `fire triangle` of fuel, heat, and oxygen.
+
+- **A chemical process** — Michael Stevens argues that fire is a verb, specifically the process of combustion, rather than a noun or a single substance like a gas or liquid.
+- **The fire tetrahedron** — Michael Stevens notes that combustion requires four components, adding a fourth element to the classic triangle of fuel, heat, and oxygen.
+- **Mechanisms of extinction** — Fire can be stopped by removing one part of the triangle, such as using water to absorb heat or sand/carbon dioxide to smother the oxygen.
+- **Chemical interference** — Halon extinguishers work by introducing chemicals like bromine that react with free radicals more strongly than oxygen does, interrupting the chemical reaction.
+- **The role of electrons** — Hannah Fry and Michael Stevens explain that light is emitted when electrons fall to lower energy levels, a process involving photons.
+
+### The chemistry of flames and light
+…
+
+## Claims checked
+
+| Claim | Who | Verdict | Sources |
+| --- | --- | --- | --- |
+| Neanderthals in Suffolk were using fire purposefully 400,000 years ago. | — | ✅ Supported by sources — Evidence confirms Neanderthals used fire in Suffolk, England, approximately 400,000 years ago. | [^1] [^2] [^3] [^4] [^5] |
+| … | | | |
+
+## References
+
+### Ideas
+- [Fire triangle](https://en.wikipedia.org/wiki/Fire_triangle) — Michael Stevens used to describe the three requirements for combustion: fuel, heat, and oxygen.
+- [Chemiluminescence](https://en.wikipedia.org/wiki/Chemiluminescence) — used to explain the blue light in a flame.
+- [Black-body radiation](https://en.wikipedia.org/wiki/Black-body_radiation) — used to explain the red/orange glow of soot particles.
+- [Attention restoration theory](https://en.wikipedia.org/wiki/Attention_restoration_theory) (Stephen and Rachel Kaplan) — cited to explain the benefits of soft fascination.
+- [Biophilia hypothesis](https://en.wikipedia.org/wiki/Biophilia_hypothesis) — invoked by Michael Stevens to explain the human connection to nature.
+…
+
+[^1]: ['It is the most exciting discovery in my 40-year career': Archaeologists uncover evidence that Neanderthals made fire 400,000 years ago in England / Live Science](https://www.livescience.com/archaeology/human-evolution/it-is-the-most-exciting-discovery-in-my-40-year-career-archaeologists-uncover-evidence-that-neanderthals-made-fire-400-000-years-ago-in-england) — Flecks of pyrite found at a more than 400,000-year-old archaeological site in Suffolk, in eastern England, push back archaeologists' evidence for controlled fir
+```
+
+</details>
+
+Every note has the same parts:
+
+- **Properties:** origin, model, dates, tags, show, episode, hosts, guests, publisher, source and duration.
+- **Summary:** the participants (hosts first, then guests), one sentence on what is discussed (also used
+  as the chat message preview), and one paragraph on what the episode is about and where it lands.
+- **Key themes:** a synthesis across the whole episode, grouped by subject, each with its essence and
+  one bullet per point, saying who made it.
+- **Claims checked:** ✅ supported by sources or ⚠️ disputed, with footnoted sources; claims without a
+  verdict are left out, and the section is omitted when none has one.
+- **References:** books (with Open Library links), films and TV, papers and reports, laws, other works,
+  ideas (linked to Wikipedia) and quotes (matched to the transcript); omitted when nothing is cited.
+- **Verification log:** a collapsed list of what the validation pass changed.
+
+Themes are a synthesis across the whole episode, grouped by subject, about one per 12 minutes
+(3 to 8). References is omitted when the episode cites nothing.
+
 
 ## Quick start
 
@@ -599,57 +651,6 @@ works where the registry knows no hosts, but the registry is the place for them.
 
 `names.txt` is gitignored — it is yours, not part of the project.
 
-## Key themes
-
-### The nature and mechanics of combustion
-> Fire is described as a self-perpetuating chemical process rather than a single substance or phase of matter. It is defined by the `fire tetrahedron`, which expands upon the traditional `fire triangle` of fuel, heat, and oxygen.
-
-- **A chemical process** — Michael Stevens argues that fire is a verb, specifically the process of combustion, rather than a noun or a single substance like a gas or liquid.
-- **The fire tetrahedron** — Michael Stevens notes that combustion requires four components, adding a fourth element to the classic triangle of fuel, heat, and oxygen.
-- **Mechanisms of extinction** — Fire can be stopped by removing one part of the triangle, such as using water to absorb heat or sand/carbon dioxide to smother the oxygen.
-- **Chemical interference** — Halon extinguishers work by introducing chemicals like bromine that react with free radicals more strongly than oxygen does, interrupting the chemical reaction.
-- **The role of electrons** — Hannah Fry and Michael Stevens explain that light is emitted when electrons fall to lower energy levels, a process involving photons.
-
-### The chemistry of flames and light
-…
-
-## Claims checked
-
-| Claim | Who | Verdict | Sources |
-| --- | --- | --- | --- |
-| Neanderthals in Suffolk were using fire purposefully 400,000 years ago. | — | ✅ Supported by sources — Evidence confirms Neanderthals used fire in Suffolk, England, approximately 400,000 years ago. | [^1] [^2] [^3] [^4] [^5] |
-| … | | | |
-
-## References
-
-### Ideas
-- [Fire triangle](https://en.wikipedia.org/wiki/Fire_triangle) — Michael Stevens used to describe the three requirements for combustion: fuel, heat, and oxygen.
-- [Chemiluminescence](https://en.wikipedia.org/wiki/Chemiluminescence) — used to explain the blue light in a flame.
-- [Black-body radiation](https://en.wikipedia.org/wiki/Black-body_radiation) — used to explain the red/orange glow of soot particles.
-- [Attention restoration theory](https://en.wikipedia.org/wiki/Attention_restoration_theory) (Stephen and Rachel Kaplan) — cited to explain the benefits of soft fascination.
-- [Biophilia hypothesis](https://en.wikipedia.org/wiki/Biophilia_hypothesis) — invoked by Michael Stevens to explain the human connection to nature.
-…
-
-[^1]: ['It is the most exciting discovery in my 40-year career': Archaeologists uncover evidence that Neanderthals made fire 400,000 years ago in England / Live Science](https://www.livescience.com/archaeology/human-evolution/it-is-the-most-exciting-discovery-in-my-40-year-career-archaeologists-uncover-evidence-that-neanderthals-made-fire-400-000-years-ago-in-england) — Flecks of pyrite found at a more than 400,000-year-old archaeological site in Suffolk, in eastern England, push back archaeologists' evidence for controlled fir
-```
-
-</details>
-
-Every note has the same parts:
-
-- **Properties:** origin, model, dates, tags, show, episode, hosts, guests, publisher, source and duration.
-- **Summary:** the participants (hosts first, then guests), one sentence on what is discussed (also used
-  as the chat message preview), and one paragraph on what the episode is about and where it lands.
-- **Key themes:** a synthesis across the whole episode, grouped by subject, each with its essence and
-  one bullet per point, saying who made it.
-- **Claims checked:** ✅ supported by sources or ⚠️ disputed, with footnoted sources; claims without a
-  verdict are left out, and the section is omitted when none has one.
-- **References:** books (with Open Library links), films and TV, papers and reports, laws, other works,
-  ideas (linked to Wikipedia) and quotes (matched to the transcript); omitted when nothing is cited.
-- **Verification log:** a collapsed list of what the validation pass changed.
-
-Themes are a synthesis across the whole episode, grouped by subject, about one per 12 minutes
-(3 to 8). References is omitted when the episode cites nothing.
 
 ## Queueing a show's episodes by title
 
