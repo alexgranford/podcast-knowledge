@@ -1,7 +1,7 @@
 ---
 name: podcast-knowledge
 description: Use when the user gives an Apple Podcasts episode URL and wants a knowledge note (Markdown, for example in an Obsidian vault).
-version: 5.21.0
+version: 5.21.1
 required_environment_variables:
   - name: OMLX_BASE_URL
     prompt: Address of the model server (oMLX or any OpenAI-compatible server), e.g. http://<host>:8000
@@ -18,7 +18,7 @@ required_environment_variables:
 # Podcast Knowledge
 
 Episode links go into a queue; a Hermes cron job (`podcast-queue`, script mode, no model) runs
-podnote on one episode at a time and messages the user on Telegram when each note is ready or has
+podnote on one episode at a time and messages the user on their chat channel when each note is ready or has
 failed. The agent's only job is to put the link in the queue. See README.md for how it works.
 
 `<python>` below is the Python that has the skill's requirements installed: in the Hermes Docker image
@@ -29,7 +29,7 @@ for example after `podshows.py monitor` has saved the registry but before it rew
 ## When the user sends an Apple Podcasts episode link
 
 ```bash
-<python> <skill-dir>/scripts/podqueue.py add "<apple-episode-url>" --source telegram
+<python> <skill-dir>/scripts/podqueue.py add "<apple-episode-url>" --source chat
 ```
 
 Reply with the single line it prints (for example "Queued (position 2 of 3)."), and nothing else.
@@ -37,7 +37,7 @@ Several links in one message: run `add` once per link and reply with one line pe
 (no `?i=`) is refused by `add`; tell the user it needs an episode link.
 
 Do not run podnote.py yourself for a link, and do not wait for the note: the queue sends its own
-Telegram message when the note is written.
+chat message when the note is written.
 
 ## Queue a show's episodes by title
 

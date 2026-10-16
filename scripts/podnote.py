@@ -364,16 +364,24 @@ def split_references(notes: str) -> tuple[str, list[str]]:
     return pieces[0].strip(), [e for e in entries if e and not e.lower().strip('".').startswith("none")]
 
 
+# A reference whose note says it came from an advert ("a podcast described in an advertisement")
+ADVERT_REFERENCE = re.compile(r"\b(advert(isement)?s?|advertised|sponsor(ed|s|ship)?|ad read|promo(tion|tional)?)\b", re.I)
+
+
 def references_section(entries: list[str]) -> str:
     """## References from the parts' tagged works, ideas and quotes, in episode order, without asking a
-    model. Untagged bullets are dropped. The same title or quote cited in two parts appears once;
-    a "quote" of fewer than four words is a term, not a line, and is left out."""
+    model. Untagged bullets are dropped, and so is anything the part note says came from an advert.
+    The same title or quote cited in two parts appears once; a "quote" of fewer than four words is a
+    term, not a line, and is left out."""
     works, ideas, quotes, seen = [], [], [], set()
     for entry in entries:
         tag = TAG.match(entry)
         if not tag:
             continue
         text = entry[tag.end():].strip()
+        about = re.split(r"\s[-\u2013\u2014]\s", text, maxsplit=1)
+        if len(about) == 2 and ADVERT_REFERENCE.search(about[1]):
+            continue                                       # an advert read out in the episode, not a citation
         key = re.sub(r"\W+", "", re.split(r"\s[-\u2013\u2014]\s", text)[0].lower())
         if not key or key in seen:
             continue

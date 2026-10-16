@@ -620,6 +620,17 @@ class ModelOutputDriftTests(unittest.TestCase):
         self.assertEqual(["[work] Cosmos (documentary) — on stars"], entries)
         self.assertEqual([], podnote.split_references("- A point.\n**References:**\n- None.\n")[1])
 
+    def test_works_from_adverts_are_left_out(self):
+        section = podnote.references_section([
+            "[work] Harbour Nights — a podcast described in an advertisement",
+            "[work] Tide Tables — sponsored segment",
+            "[work] The Sponsor — a novel cited by Okafor",                     # the word in a title is fine
+            "[work] Mad Men (TV series) — cited on the history of advertising"])  # a subject, not an advert
+        self.assertNotIn("Harbour Nights", section)
+        self.assertNotIn("Tide Tables", section)
+        self.assertIn("The Sponsor", section)
+        self.assertIn("Mad Men", section)
+
     def test_tags_in_any_case_are_read(self):
         section = podnote.references_section(["[Work] Cosmos (documentary) — on stars", "[IDEA] Occam's razor — on simplicity",
                                               "an untagged bullet"])

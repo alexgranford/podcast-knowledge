@@ -1,9 +1,8 @@
-# podcast-knowledge (podnote)
+# podcast-knowledge
 
 Turn an Apple Podcasts episode into one durable Markdown note: who took part, a short summary with
-an overall take, the key themes as a synthesis of the whole conversation, and the works and quotes
-it cites. All model work runs on a local model server: no audio, transcript or note goes to a cloud
-model. Only the optional validation pass sends short search queries to web services.
+an overall take, the key themes as a synthesis of the whole conversation, the claims checked against
+sources, and the works, ideas and quotes it cites. All model work runs on your own hardware.
 
 ```
 podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
@@ -11,10 +10,37 @@ podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
   STATUS: complete
 ```
 
+## Features
+
+- **One link in, one finished note out.** Download, speech recognition, synthesis and validation run
+  unattended; the result is a structured note with participants, a summary, key themes, checked claims
+  and references.
+- **Local by design.** Speech recognition and writing run on your own model server; no audio,
+  transcript or note leaves your network unless you choose a hosted model. Only the optional
+  validation pass sends short search queries.
+- **Built for small models.** The transcript is read in parts of about 1,800 words, the note is built
+  from the part notes, and Python does the bookkeeping (ordering, de-duplication, references). Part size,
+  model and sampling settings were chosen by measurement on real episodes.
+- **Knows who is speaking without diarization.** Hosts come from a show registry that maintains itself,
+  guests from the episode description; names are passed to speech recognition as hints, so unusual
+  names come out spelled right.
+- **Checked against sources.** Claims get a verdict only with cited evidence (Wikipedia, Wikidata,
+  OpenAlex, Brave Search) and a dispute must quote the contradicting sentence; books are named and
+  linked through Open Library; quotes are matched to the transcript's exact words; nothing is removed
+  without evidence.
+- **Runs itself.** A queue with retries, monitoring of followed shows for new episodes, queueing a
+  show's back catalogue by title words and period, and one chat message per finished episode on any
+  channel your agent uses.
+- **Safe by default.** A failed run never replaces a good note; every note is checked against a
+  metadata standard before it is written (your vault's own, if it has one); transcription resumes
+  where it stopped; feeds may only reach public addresses; the cache cleans itself.
+- **Any Markdown folder, Obsidian-ready.** Notes carry properties, callouts and a table of every
+  episode for Obsidian Bases, and read as plain Markdown anywhere else.
+- **Tested.** About 145 tests run on invented data without a model server, on every push.
+
 ## Quick start
 
-1. A Mac with Apple Silicon (24 GB) runs [oMLX](https://github.com/jundot/omlx) with
-   `Qwen3-ASR-1.7B-8bit` and `gemma-4-26B-A4B-it-qat-4bit`, and an API key.
+1. Run a model server with a speech-recognition model and a text model (see "Models").
 2. On the machine that runs the scripts (Python 3.11+, `ffmpeg`):
    ```bash
    git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
@@ -23,8 +49,8 @@ podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
    python3 scripts/setup_vad.py                 # the speech-detection runtime
    python3 scripts/podnote.py "<an Apple Podcasts episode link>"
    ```
-3. Under Hermes, follow "Running under Hermes" instead of step 2's `.env`: the settings go in
-   Hermes's `.env`, and three cron jobs run the queue, the show monitor and a weekly digest.
+3. To run it hands-off from a chat app, follow "Running under Hermes": the settings go in Hermes's
+   `.env`, and three scheduled jobs run the queue, the show monitor and a weekly digest.
 
 The rest of this file explains the design, the setup in detail, operations and the output.
 
@@ -54,53 +80,49 @@ small, and Python does everything a model does not need to do. The rules:
 `scripts/podnote.py` (about 1,100 lines) is the whole note pipeline, over a separate acquisition and
 speech-recognition layer.
 
-## Recommended setup
+## How it fits together
 
 ```
-  you ── Telegram ──►  Hermes agent  (Docker, on an always-on box: NAS or small server)
-                         │  .env: every key and setting
-                         │  cron jobs, script mode, no model:
-                         │    podcast-queue (5 min) · podcast-monitor (30 min) · podcast-shows-digest (weekly)
-                         ▼
-                 podqueue.py ──► podnote.py ──► podverify.py
-                      │              │               │
-                      │              │               ├──► Wikipedia / Wikidata · Open Library · OpenAlex (free)
-                      │              │               └──► Brave Search: claims and book names     optional key
-                      │              ├──► Apple Podcasts: lookup, RSS feed, audio
-                      │              ▼
-                      │      oMLX on an Apple Silicon Mac (24 GB), same LAN
-                      │        Qwen3-ASR-1.7B-8bit: speech to text
-                      │        gemma-4-26B-A4B-it-qat-4bit: everything else
-                      ▼
-               notes folder (Markdown; an Obsidian vault works well, synced to your devices)
+  chat (any channel your agent uses) ──► agent: queues episode links, schedules the jobs
+                                              │
+                          podqueue.py ──► podnote.py ──► podverify.py
+                                              │               │
+             Apple Podcasts: lookup, feed, audio ◄─┤               ├──► Wikipedia · Wikidata · Open Library · OpenAlex
+                                              │               └──► Brave Search (optional key)
+                                              ▼
+                           model server: speech-recognition model + text model
+                                              │
+                                              ▼
+                        notes folder (Markdown; for example an Obsidian vault)
 ```
 
-| component | role | notes |
+| component | role | required |
 | --- | --- | --- |
-| [Hermes agent](https://hermes-agent.nousresearch.com) | takes episode links on Telegram, runs the cron jobs, sends one message per finished or failed episode | the skill lives in its skills folder; keys and settings in Hermes's `.env` |
-| [oMLX](https://github.com/jundot/omlx) | serves both models over an OpenAI-compatible API | one model loaded at a time (the model arbiter), so the memory budget holds; a key is required, and plain HTTP is accepted only on private addresses |
-| notes folder | where notes are written | any local folder, mounted into the container; see "Where notes go" |
-| state and cache folders | queue, show registry, logs; audio, transcripts, model output per episode | outside the notes folder; the cache keeps audio and transcripts per episode, so plan for tens of GB |
-| Silero VAD runtime | finds speech pauses to cut the audio into windows | its own small venv (`onnxruntime`, `numpy`); the model is bundled in `assets/` |
-| web services | evidence for the validation pass | Wikipedia, Wikidata, Open Library and OpenAlex need no key; Brave Search (one optional key) adds web evidence for claims and the real names of cited books |
+| the scripts (this repository) | queue, download, transcription, synthesis, validation | yes |
+| model server | serves the speech-recognition and text models over an HTTP API | yes |
+| notes folder | where notes are written; any folder the scripts can write to | yes |
+| state and cache folders | queue, show registry and logs; transcripts and working files per episode | yes (two folders) |
+| speech-detection runtime | Silero VAD in its own small venv, built by `scripts/setup_vad.py`; the model is bundled | yes |
+| [Hermes agent](https://hermes-agent.nousresearch.com) | takes links from chat, runs the scheduled jobs, sends the messages | optional |
+| web services | evidence for the validation pass | Wikipedia, Wikidata, Open Library, OpenAlex: no key; Brave Search: optional key |
 
-The heavy work (speech recognition and the text model) runs on the Mac; the box running Hermes only
-downloads audio, cuts it and moves text, so it needs no GPU. Without Hermes the scripts run the same
-from a shell or any scheduler; only the Telegram messages are Hermes's.
+These pieces can share one machine or be spread across a network: for example the agent and the
+scripts on an always-on computer, the model server on a machine with a capable GPU or unified memory,
+and the notes folder synced to your devices. The scripts themselves need no GPU: they download audio,
+cut it and move text. Without an agent they run the same from a shell or any scheduler.
 
 ## Models
 
-The preferred inference server is [oMLX](https://github.com/jundot/omlx), on Apple Silicon. Two models
-do all the work:
+The skill was built and tested on a **24 GB Apple Silicon Mac** running
+[oMLX](https://github.com/jundot/omlx), with these two models. Treat them as the reference setup and
+a guide, not a requirement: other memory sizes and other hardware will have their own best models.
 
-- **`Qwen3-ASR-1.7B-8bit`** turns speech into text, window by window, with a hint of the show's names
-  (see "Name hints"). It is small enough (1.7B parameters, 8-bit) to leave the memory to the text model.
-- **`gemma-4-26B-A4B-it-qat-4bit`** (Google's quantization-aware-trained 4-bit Gemma 4, a 26B mixture
-  of experts with about 4B active parameters) does everything else: part notes, themes, summary, tags
-  and the validation pass.
+| role | model on the 24 GB reference setup | setting |
+| --- | --- | --- |
+| speech recognition | `Qwen3-ASR-1.7B-8bit` | `OMLX_ASR_MODEL` |
+| everything else: part notes, themes, summary, tags, validation | `gemma-4-26B-A4B-it-qat-4bit` (Google's quantization-aware-trained 4-bit Gemma 4, a 26B mixture of experts with about 4B active parameters) | `PODNOTE_MODEL` |
 
-Considerable testing went into choosing these two for a 24 GB Apple Silicon Mac, where the text model
-peaks near 19 GB:
+Why these two, on 24 GB (the text model peaks near 19 GB, and only one model is loaded at a time):
 
 - On a six-episode comparison the QAT Gemma made far fewer garbled words than the plain
   `gemma-4-26b-a4b-it-4bit` conversion (about 1–2 against 6) and kept more of each episode in its
@@ -111,9 +133,22 @@ peaks near 19 GB:
   penalty (it mangled repeated words), thinking off (about five times the time, no clear gain). The
   comment in `podnote.ask()` records what each alternative did.
 - Transcript parts of about 1,800 words: larger parts lost detail steadily.
+- The 1.7B speech model leaves the memory to the text model and spells names well when given hints.
 
-Other OpenAI-compatible servers and models work (`OMLX_BASE_URL`, `PODNOTE_MODEL`, or
-`PODNOTE_BASE_URL` for the text model only), but these are the tested ones.
+With less memory, a smaller text model; with more, a larger one may write better notes. If you run
+the skill on other hardware or models, an issue with what worked (memory, models, speed, note quality)
+is welcome: the aim is a short table of tested setups per memory size.
+
+**Inference engines.** The skill talks to its models through the standard OpenAI-compatible APIs
+(`/v1/chat/completions` for text, `/v1/audio/transcriptions` for speech), so the inference engine is
+interchangeable: oMLX is the one it was built and tested on, and engines such as
+[Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), the `llama.cpp` server,
+[vLLM](https://github.com/vllm-project/vllm) and `mlx_lm.server`, or a hosted API such as
+[OpenRouter](https://openrouter.ai), fill the same role. The note-writing step already accepts any of
+them (`PODNOTE_BASE_URL`, `PODNOTE_API_KEY`, `PODNOTE_MODEL`); in this release speech recognition and
+the validation pass still use oMLX's model loading, and support for other engines there is planned for
+upcoming releases. A hosted API sends the transcript and notes to that provider; with a local engine
+everything stays on your network.
 
 ## Who said what
 
@@ -133,12 +168,24 @@ On a six-episode test with 17 attributions checked against the transcripts: 12 r
 
 ## Requirements
 
+**Mandatory**
+
 - Python 3.11+ and `ffmpeg` (with `ffprobe`) on the machine that runs the scripts
-- A model server with an OpenAI-compatible API serving both models (see "Models"): oMLX on an Apple
-  Silicon Mac with 24 GB or more is the tested setup
-- Network access to Apple Podcasts (lookup, feeds, audio) and, for the validation pass, to Wikipedia,
-  Wikidata, Open Library, OpenAlex and (optionally) Brave Search
-- Disk for the cache: audio and transcripts are kept per episode (tens of GB over time)
+- A model server with a speech-recognition model and a text model (see "Models")
+- Network access to Apple Podcasts (lookup, feeds, audio)
+- A notes folder, and folders for state and cache the scripts can write to (the cache holds about
+  0.5–1 MB of text per episode; audio only while it is being transcribed)
+
+**Optional**
+
+- [Hermes agent](https://hermes-agent.nousresearch.com): queueing from chat, scheduled jobs and
+  messages on any channel it supports (Telegram, WhatsApp, Discord, Signal and others)
+- A [Brave Search API](https://brave.com/search/api/) key: web evidence for claims and the real
+  names of cited books
+- Network access to Wikipedia, Wikidata, Open Library and OpenAlex: without it the validation pass
+  does less, the notes are still written
+- Obsidian, or any Markdown editor, to read the notes
+- A metadata standard of your own in the notes folder (see "Where notes go")
 
 | file | what it installs | where |
 | --- | --- | --- |
@@ -158,14 +205,15 @@ ffmpeg -version                                # must work; install ffmpeg first
 
 ### 2. Prepare the model server
 
-Run [oMLX](https://github.com/jundot/omlx) (or another OpenAI-compatible server) where the scripts can
-reach it, give it an API key, and make both models available under these ids:
+Run a model server where the scripts can reach it, give it an API key, and make a speech-recognition
+model and a text model available. On the reference setup that is [oMLX](https://github.com/jundot/omlx)
+with these ids (see "Models" for other servers and memory sizes):
 
-- `Qwen3-ASR-1.7B-8bit` (speech recognition; override with `OMLX_ASR_MODEL`)
-- `gemma-4-26B-A4B-it-qat-4bit` (everything else; override with `PODNOTE_MODEL`)
+- `Qwen3-ASR-1.7B-8bit` (speech recognition; another model with `OMLX_ASR_MODEL`)
+- `gemma-4-26B-A4B-it-qat-4bit` (everything else; another model with `PODNOTE_MODEL`)
 
-The skill loads and unloads them itself, one at a time. Plain `http://` is accepted only for a private
-or loopback address; anything else needs `https://`.
+With oMLX the skill loads and unloads the models itself, one at a time, so both fit in memory. Plain
+`http://` is accepted only for a private or loopback address; anything else needs `https://`.
 
 ### 3. Settings and keys
 
@@ -200,26 +248,27 @@ python3 scripts/podverify.py "<the note path it printed after NOTE:>"
 The tests use invented data and need neither the model server nor your settings; a few that need the
 speech runtime or `ffmpeg` are skipped without them.
 
-Configuration is environment variables; the model server's address and key are required:
+Configuration is environment variables. **Required** settings must be set; **recommended** ones
+have defaults that work for a quick test but belong somewhere permanent; **optional** ones add features.
 
-| variable | default | meaning |
-| --- | --- | --- |
-| `OMLX_BASE_URL` | `http://127.0.0.1:8000` | model server |
-| `OMLX_API_KEY` | — | required; any non-empty value if your server has no auth |
-| `OMLX_ASR_MODEL` | `Qwen3-ASR-1.7B-8bit` | speech recognition model id |
-| `PODNOTE_MODEL` | `gemma-4-26B-A4B-it-qat-4bit` | synthesis model id |
-| `PODNOTE_ROOT` | `~/Notes` | the folder notes go under: any local folder (an Obsidian vault works well) |
-| `PODNOTE_NOTES_DIR` | `Podcasts` | podcasts folder inside it: one folder per show, plus `Podcasts.base` and `Shows.md` |
-| `PODNOTE_CACHE` | `/var/tmp/podnote` | job working directory (audio, transcript, part notes) |
-| `PODNOTE_STATE` | `/var/tmp/podnote-state` | queue, show registry, monitor state, logs, locks and the ASR database |
-| `PODNOTE_VAD_RUNTIME` | `/var/lib/podnote/vad-runtime` | VAD venv and readiness record |
-| `PODNOTE_KEEP_DAYS` | `30` | days an episode's transcript and working files are kept after their last use (audio goes as soon as the transcript is complete) |
-| `PODNOTE_SECTION_WORDS` | `1800` | transcript words per part; for experiments |
-| `PODNOTE_BASE_URL`, `PODNOTE_API_KEY` | — | optional: write notes with any OpenAI-compatible service instead of local oMLX (speech recognition still needs oMLX) |
-| `PODNOTE_BRAVE_API_KEY` | — | optional: web search (Brave Search API) for claim evidence and the names of cited books |
-| `PODNOTE_CONTACT` | — | your e-mail or URL, sent in the User-Agent to Wikipedia, Open Library and the others, as they ask of automated clients |
-| `PODNOTE_SCRIPT_TAG` | — | the tag your notes folder gives notes written by scripts (used on `Shows.md`) |
-| `PODNOTE_TEST_RULES` | — | tests only: your folder's `_meta` folder, to test against its own metadata standard |
+| variable | needed | default | meaning |
+| --- | --- | --- | --- |
+| `OMLX_BASE_URL` | required | `http://127.0.0.1:8000` | model server address (speech recognition, and the text model unless `PODNOTE_BASE_URL` is set) |
+| `OMLX_API_KEY` | required | — | model server key; any non-empty value if your server has no auth |
+| `PODNOTE_ROOT` | required | `~/Notes` | the folder notes go under: any local folder (an Obsidian vault works well) |
+| `PODNOTE_CACHE` | recommended | `/var/tmp/podnote` | working folder per episode (transcript, part notes, records) |
+| `PODNOTE_STATE` | recommended | `/var/tmp/podnote-state` | queue, show registry, monitor state, logs, locks and the ASR database |
+| `PODNOTE_VAD_RUNTIME` | recommended | `/var/lib/podnote/vad-runtime` | speech-detection venv and readiness record |
+| `PODNOTE_CONTACT` | recommended | — | your e-mail or URL, sent in the User-Agent to Wikipedia, Open Library and the others, as they ask of automated clients (raises their rate limits) |
+| `OMLX_ASR_MODEL` | optional | `Qwen3-ASR-1.7B-8bit` | speech-recognition model id |
+| `PODNOTE_MODEL` | optional | `gemma-4-26B-A4B-it-qat-4bit` | text model id |
+| `PODNOTE_BASE_URL`, `PODNOTE_API_KEY` | optional | — | a separate OpenAI-compatible server or hosted API for writing the notes (see "Models") |
+| `PODNOTE_BRAVE_API_KEY` | optional | — | web search (Brave Search API) for claim evidence and the names of cited books |
+| `PODNOTE_NOTES_DIR` | optional | `Podcasts` | podcasts folder inside `PODNOTE_ROOT`: one folder per show, plus `Podcasts.base` and `Shows.md` |
+| `PODNOTE_KEEP_DAYS` | optional | `30` | days an episode's transcript and working files are kept after their last use (audio goes as soon as the transcript is complete) |
+| `PODNOTE_SCRIPT_TAG` | optional | — | the tag your notes folder gives notes written by scripts (used on `Shows.md`) |
+| `PODNOTE_SECTION_WORDS` | optional | `1800` | transcript words per part; for experiments |
+| `PODNOTE_TEST_RULES` | optional | — | tests only: your notes folder's `_meta` folder, to test against its own metadata standard |
 
 Every key and setting is read from the environment, from one place:
 
@@ -242,16 +291,19 @@ Every key and setting is read from the environment, from one place:
    `PODNOTE_BRAVE_API_KEY` if you use Brave. Hermes rereads `.env` for every cron run; no restart needed.
 3. Build the speech-detection runtime once, with the same Python: `scripts/setup_vad.py`.
 4. Copy the three wrappers from `hermes/` to `~/.hermes/scripts/` (in Docker `/opt/data/scripts/`) and
-   create the cron jobs. Each runs a script with no model and sends its output to Telegram; empty
+   create the cron jobs. Each runs a script with no model and sends its output to your chat; empty
    output sends nothing:
 
    ```bash
-   hermes cron create "*/5 * * * *" --name podcast-queue --script podcast-queue.py --no-agent --deliver telegram
-   hermes cron create "7,37 * * * *" --name podcast-monitor --script podcast-monitor.py --no-agent --deliver telegram
-   hermes cron create "15 7 * * 1" --name podcast-shows-digest --script podcast-shows-digest.py --no-agent --deliver telegram
+   hermes cron create "*/5 * * * *" --name podcast-queue --script podcast-queue.py --no-agent --deliver <channel>
+   hermes cron create "7,37 * * * *" --name podcast-monitor --script podcast-monitor.py --no-agent --deliver <channel>
+   hermes cron create "15 7 * * 1" --name podcast-shows-digest --script podcast-shows-digest.py --no-agent --deliver <channel>
    ```
 
-5. Send an Apple Podcasts episode link to Hermes on Telegram. The agent queues it (see `SKILL.md`), and
+   `<channel>` is any Hermes delivery target: `telegram`, `discord`, `signal`, a platform and chat as
+   `platform:chat_id` (WhatsApp, for example), or `origin`.
+5. Send an Apple Podcasts episode link to Hermes on any channel it serves (a chat app, or a client of
+   its API server). The agent queues it (see `SKILL.md`), and
    within a few minutes the queue job starts; a message follows when the note is written or has failed.
 
 The wrappers find the skill under `~/.hermes/skills/` (or `PODNOTE_SKILL_DIR`) and run it on the Python
@@ -309,7 +361,7 @@ mode (no model, no cost), decide what it runs and check what it wrote:
 
 | program | Hermes cron job | what it does |
 | --- | --- | --- |
-| `scripts/podqueue.py` | `podcast-queue`, every 5 min | runs podnote on the next queued link, then the validation pass; one episode per tick; Telegram message per finished or failed episode, silence otherwise |
+| `scripts/podqueue.py` | `podcast-queue`, every 5 min | runs podnote on the next queued link, then the validation pass; one episode per tick; a chat message per finished or failed episode, silence otherwise |
 | `scripts/podmonitor.py` | `podcast-monitor`, at :07 and :37 | checks the monitored shows for new episodes and queues them |
 | `scripts/podshows.py digest` | `podcast-shows-digest`, Mondays 07:15 | weekly summary of show registry changes (silent when none) |
 | `scripts/podverify.py` | (called by the queue) | validates names, works, quotes and key claims against external sources |
@@ -318,14 +370,14 @@ Each cron job calls a small wrapper from `hermes/`, copied to `~/.hermes/scripts
 cron scripts from there); see "Running under Hermes".
 
 **Queue.** `podqueue.py add <apple-episode-url>` appends a link (the Hermes agent does this when a
-link arrives on Telegram); `podqueue.py list` shows it. Files in `PODNOTE_STATE`: `queue.txt`
+link arrives in chat); `podqueue.py list` shows it. Files in `PODNOTE_STATE`: `queue.txt`
 (bare links, editable by hand), `queue-state.json` (retry bookkeeping), `done.txt`, `failed.txt`.
 An episode that could not be processed — not indexed by Apple yet, model server unreachable, ASR
 busy — is retried 1, 3, 6 and 12 hours after its first failure, then reported as failed. Another
 podnote run holding the lock is not a failure; the link just waits. An incomplete note is a failure
 (the old note stays), reported at once. A verification pass that fails (a source or the model was
 unavailable) is retried on its own, without remaking the note, on the same schedule
-(`verify-retry.json`); this is silent on Telegram and logged in `done.txt` or `failed.txt`. A run that
+(`verify-retry.json`); this sends no chat message and is logged in `done.txt` or `failed.txt`. A run that
 dies mid-way (a timeout or a crash) has the models it left loaded on the server unloaded.
 
 **Cache.** Each episode's working folder (`PODNOTE_CACHE/jobs/podcast-<id>/`) keeps the transcript,
@@ -362,7 +414,7 @@ show's folder. Hosts maintain themselves from evidence, with no approvals:
 - a name corrected by the validation pass in 2 episodes of a show becomes that show's name fix;
   advertisers named in show notes are kept per show for 90 days and named in the part-note prompt.
 
-Every change is logged (`shows-changes.log`) and summarised in a weekly Telegram digest, sent only when
+Every change is logged (`shows-changes.log`) and summarised in a weekly chat digest, sent only when
 something changed. The user corrects through Hermes ("hosts of X are A, B", "C is not a host of X",
 "monitor X"). `Shows.md` in the podcasts notes folder is a generated, read-only overview.
 
@@ -489,52 +541,83 @@ works where the registry knows no hosts, but the registry is the place for them.
 
 ## What it produces
 
+An unedited excerpt of a real note, made from a one-hour episode of *The Rest Is Science* ("Why Do We
+Like Staring Into Fire?") on the reference setup. `…` marks what was left out: four more themes,
+a second checked claim, further ideas and the remaining footnotes.
+
 ```markdown
 ---
-origin: agent                  # see "Where notes go" above
+origin: agent
 model: gemma-4-26B-A4B-it-qat-4bit
-created: "2026-10-07T21:14:03"
-updated: "2026-10-07T21:20:40"
-tags: [science, history]
-show: "..."
-episode: "..."
-published: "2026-10-07T04:00:00"
-hosts: ["Host Name"]
-guests: ["Guest Name"]
-publisher: "..."
-source_url: https://podcasts.apple.com/...
-apple_episode_id: '1000000000000'
-duration: 4637
+created: "2026-10-09T02:57:31"
+updated: "2026-10-16T16:03:12"
+tags: [history, psychology, art, philosophy]
+show: "The Rest Is Science"
+episode: "Why Do We Like Staring Into Fire?"
+published: "2026-09-27T21:00:00"
+hosts: ["Hannah Fry", "Michael Stevens"]
+publisher: "Goalhanger"
+source_url: https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284
+apple_episode_id: '1000791914284'
+duration: 3684
 ---
-# Episode title
+# Why Do We Like Staring Into Fire?
 
-**Show** · 2026-10-07 · ⏱ 1h 17m · 🎧 [Apple Podcasts](...)
+**The Rest Is Science** · 2026-09-27 · ⏱ 1h 01m · 🎧 [Apple Podcasts](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284)
 
 > [!abstract] Summary
-> **Participants:** **Host Name** (host), **Guest Name** (guest, role)
+> **Participants:** **Hannah Fry** (host), **Michael Stevens** (host)
 >
-> One short sentence on what is discussed (the quick summary; it is also the Telegram preview)
+> Fire is a complex chemical process rather than a single substance, playing a fundamental role in both human evolutionary history and modern psychological attention.
 >
-> One paragraph on what the episode is about and where it lands: its arguments and conclusions.
+> Combustion is defined as a self-perpetuating chemical reaction involving the fire tetrahedron of fuel, heat, oxygen, and chemical reactions. Flames emit light through chemiluminescence and black body radiation, with colors changing based on temperature and oxygen levels. Historically, the control and intentional making of fire likely facilitated human cooperation and social structures. While fire provides "soft fascination" that allows for cognitive restoration and social readiness, modern digital stimulation often imposes a "hard fascination" that can block creative thinking and diminish the communal, nurturing experiences found in nature.
 
 ## Key themes
-### Theme title
-> The essence of the theme: where the speakers agree or clash, what is left open.
 
-- **Lead-in** — one point per bullet, with who made it; `named concepts` in code style
+### The nature and mechanics of combustion
+> Fire is described as a self-perpetuating chemical process rather than a single substance or phase of matter. It is defined by the `fire tetrahedron`, which expands upon the traditional `fire triangle` of fuel, heat, and oxygen.
+
+- **A chemical process** — Michael Stevens argues that fire is a verb, specifically the process of combustion, rather than a noun or a single substance like a gas or liquid.
+- **The fire tetrahedron** — Michael Stevens notes that combustion requires four components, adding a fourth element to the classic triangle of fuel, heat, and oxygen.
+- **Mechanisms of extinction** — Fire can be stopped by removing one part of the triangle, such as using water to absorb heat or sand/carbon dioxide to smother the oxygen.
+- **Chemical interference** — Halon extinguishers work by introducing chemicals like bromine that react with free radicals more strongly than oxygen does, interrupting the chemical reaction.
+- **The role of electrons** — Hannah Fry and Michael Stevens explain that light is emitted when electrons fall to lower energy levels, a process involving photons.
+
+### The chemistry of flames and light
+…
 
 ## Claims checked
-| Claim | Who | Verdict | Sources |      ✅ supported by sources · ⚠️ disputed (claims without a verdict are left out; no section when none has one)
+
+| Claim | Who | Verdict | Sources |
+| --- | --- | --- | --- |
+| Neanderthals in Suffolk were using fire purposefully 400,000 years ago. | — | ✅ Supported by sources — Evidence confirms Neanderthals used fire in Suffolk, England, approximately 400,000 years ago. | [^1] [^2] [^3] [^4] [^5] |
+| … | | | |
 
 ## References
-### Books              table: title, author, cited for, Open Library link
-### Films & TV / Papers & reports / Laws / Other works
-### Ideas              theories, principles, ideologies: linked to their Wikipedia article
-### Quotes             quote callouts with the speaker
 
-> [!info]- Verification log      collapsed
-[^1]: source footnotes for the claims
+### Ideas
+- [Fire triangle](https://en.wikipedia.org/wiki/Fire_triangle) — Michael Stevens used to describe the three requirements for combustion: fuel, heat, and oxygen.
+- [Chemiluminescence](https://en.wikipedia.org/wiki/Chemiluminescence) — used to explain the blue light in a flame.
+- [Black-body radiation](https://en.wikipedia.org/wiki/Black-body_radiation) — used to explain the red/orange glow of soot particles.
+- [Attention restoration theory](https://en.wikipedia.org/wiki/Attention_restoration_theory) (Stephen and Rachel Kaplan) — cited to explain the benefits of soft fascination.
+- [Biophilia hypothesis](https://en.wikipedia.org/wiki/Biophilia_hypothesis) — invoked by Michael Stevens to explain the human connection to nature.
+…
+
+[^1]: ['It is the most exciting discovery in my 40-year career': Archaeologists uncover evidence that Neanderthals made fire 400,000 years ago in England / Live Science](https://www.livescience.com/archaeology/human-evolution/it-is-the-most-exciting-discovery-in-my-40-year-career-archaeologists-uncover-evidence-that-neanderthals-made-fire-400-000-years-ago-in-england) — Flecks of pyrite found at a more than 400,000-year-old archaeological site in Suffolk, in eastern England, push back archaeologists' evidence for controlled fir
 ```
+
+Every note has the same parts:
+
+- **Properties:** origin, model, dates, tags, show, episode, hosts, guests, publisher, source and duration.
+- **Summary:** the participants (hosts first, then guests), one sentence on what is discussed (also used
+  as the chat message preview), and one paragraph on what the episode is about and where it lands.
+- **Key themes:** a synthesis across the whole episode, grouped by subject, each with its essence and
+  one bullet per point, saying who made it.
+- **Claims checked:** ✅ supported by sources or ⚠️ disputed, with footnoted sources; claims without a
+  verdict are left out, and the section is omitted when none has one.
+- **References:** books (with Open Library links), films and TV, papers and reports, laws, other works,
+  ideas (linked to Wikipedia) and quotes (matched to the transcript); omitted when nothing is cited.
+- **Verification log:** a collapsed list of what the validation pass changed.
 
 Themes are a synthesis across the whole episode, grouped by subject, about one per 12 minutes
 (3 to 8). References is omitted when the episode cites nothing.
