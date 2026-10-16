@@ -38,6 +38,51 @@ podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
   episode for Obsidian Bases, and read as plain Markdown anywhere else.
 - **Tested.** About 145 tests run on invented data without a model server, on every push.
 
+## What it produces
+
+An excerpt of a real note, made from a one-hour episode of *The Rest Is Science*,
+["Why Do We Like Staring Into Fire?"](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284),
+with [Hannah Fry](https://x.com/FryRsquared) and [Michael Stevens](https://x.com/tweetsauce), on the
+24 GB reference setup (see "Models") and shown in Obsidian's style. Four more themes, a second checked
+claim, further ideas and the footnotes are left out; nothing else is edited.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/example-note-dark.png">
+    <img alt="A podcast-knowledge note: properties, summary with participants, a key theme with its points, a checked claim and linked ideas" src="docs/images/example-note-light.png" width="760">
+  </picture>
+</p>
+
+<details>
+<summary>The same excerpt as Markdown</summary>
+
+```markdown
+---
+origin: agent
+model: gemma-4-26B-A4B-it-qat-4bit
+created: "2026-10-09T02:57:31"
+updated: "2026-10-16T16:03:12"
+tags: [history, psychology, art, philosophy]
+show: "The Rest Is Science"
+episode: "Why Do We Like Staring Into Fire?"
+published: "2026-09-27T21:00:00"
+hosts: ["Hannah Fry", "Michael Stevens"]
+publisher: "Goalhanger"
+source_url: https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284
+apple_episode_id: '1000791914284'
+duration: 3684
+---
+# Why Do We Like Staring Into Fire?
+
+**The Rest Is Science** · 2026-09-27 · ⏱ 1h 01m · 🎧 [Apple Podcasts](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284)
+
+> [!abstract] Summary
+> **Participants:** **Hannah Fry** (host), **Michael Stevens** (host)
+>
+> Fire is a complex chemical process rather than a single substance, playing a fundamental role in both human evolutionary history and modern psychological attention.
+>
+> Combustion is defined as a self-perpetuating chemical reaction involving the fire tetrahedron of fuel, heat, oxygen, and chemical reactions. Flames emit light through chemiluminescence and black body radiation, with colors changing based on temperature and oxygen levels. Historically, the control and intentional making of fire likely facilitated human cooperation and social structures. While fire provides "soft fascination" that allows for cognitive restoration and social readiness, modern digital stimulation often imposes a "hard fascination" that can block creative thinking and diminish the communal, nurturing experiences found in nature.
+
 ## Quick start
 
 1. Run a model server with a speech-recognition model and a text model (see "Models").
@@ -553,49 +598,6 @@ belong to one show live in the show registry. An `@Show Name => First Host, Seco
 works where the registry knows no hosts, but the registry is the place for them.
 
 `names.txt` is gitignored — it is yours, not part of the project.
-
-## What it produces
-
-An excerpt of a real note, made from a one-hour episode of *The Rest Is Science* ("Why Do We Like
-Staring Into Fire?") on the reference setup, rendered in Obsidian's style. Four more themes, a second
-checked claim, further ideas and the footnotes are left out; nothing else is edited.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/example-note-dark.png">
-    <img alt="A podcast-knowledge note: properties, summary with participants, a key theme with its points, a checked claim and linked ideas" src="docs/images/example-note-light.png" width="760">
-  </picture>
-</p>
-
-<details>
-<summary>The same excerpt as Markdown</summary>
-
-```markdown
----
-origin: agent
-model: gemma-4-26B-A4B-it-qat-4bit
-created: "2026-10-09T02:57:31"
-updated: "2026-10-16T16:03:12"
-tags: [history, psychology, art, philosophy]
-show: "The Rest Is Science"
-episode: "Why Do We Like Staring Into Fire?"
-published: "2026-09-27T21:00:00"
-hosts: ["Hannah Fry", "Michael Stevens"]
-publisher: "Goalhanger"
-source_url: https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284
-apple_episode_id: '1000791914284'
-duration: 3684
----
-# Why Do We Like Staring Into Fire?
-
-**The Rest Is Science** · 2026-09-27 · ⏱ 1h 01m · 🎧 [Apple Podcasts](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284)
-
-> [!abstract] Summary
-> **Participants:** **Hannah Fry** (host), **Michael Stevens** (host)
->
-> Fire is a complex chemical process rather than a single substance, playing a fundamental role in both human evolutionary history and modern psychological attention.
->
-> Combustion is defined as a self-perpetuating chemical reaction involving the fire tetrahedron of fuel, heat, oxygen, and chemical reactions. Flames emit light through chemiluminescence and black body radiation, with colors changing based on temperature and oxygen levels. Historically, the control and intentional making of fire likely facilitated human cooperation and social structures. While fire provides "soft fascination" that allows for cognitive restoration and social readiness, modern digital stimulation often imposes a "hard fascination" that can block creative thinking and diminish the communal, nurturing experiences found in nature.
 
 ## Key themes
 
