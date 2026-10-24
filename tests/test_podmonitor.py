@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
@@ -105,6 +106,30 @@ class MonitorTests(unittest.TestCase):
         self.apple = {"late": "https://podcasts.apple.com/gb/podcast/id1000000101?i=1000000000003"}
         self.check()
         self.assertEqual(["https://podcasts.apple.com/gb/podcast/id1000000101?i=1000000000003"], self.queue())
+
+    def test_monitor_uses_direct_resolvers_window_for_new_apple_episode(self):
+        self.check()  # initialise with the existing catalogue
+        self.feed = [episode("new-guid", "Just published")] + self.feed
+        queries = []
+
+        def apple_response(url):
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            queries.append(params)
+            # Apple's smaller lookup window may lag its larger response.
+            rows = ([{"episodeGuid": "new-guid", "trackId": 1000000000004}]
+                    if params["limit"] == [str(podfetch.APPLE_EPISODE_LIMIT)] else [])
+            return 200, json.dumps({"results": rows}).encode(), {}
+
+        with mock.patch.object(podmonitor, "feed_episodes", lambda show, country: list(self.feed)), \
+                mock.patch.object(podfetch, "http_get", side_effect=apple_response):
+            self.assertEqual("", podmonitor.check())
+
+        self.assertEqual(["https://podcasts.apple.com/gb/podcast/id1000000101?i=1000000000004"], self.queue())
+        self.assertTrue(queries)
+        self.assertTrue(all(query["limit"] == [str(podfetch.APPLE_EPISODE_LIMIT)] for query in queries))
+        state = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
+        self.assertIn("new-guid", state["seen"])
+        self.assertNotIn("new-guid", state["pending"])
 
     def test_feed_failure_is_silent_and_recorded(self):
         def broken(show, country):
