@@ -56,7 +56,10 @@ def apple_links(show: str, country: str) -> dict[str, str]:
     """episodeGuid -> Apple episode link, for the show's most recent episodes on Apple."""
     links = {}
     for store in podfetch.storefronts(country):              # the US catalogue first: others lag it
-        query = urllib.parse.urlencode({"id": show, "entity": "podcastEpisode", "limit": 50, "country": store})
+        # Use the same window as direct-link resolution. Apple can return a stale
+        # 50-episode response while its 200-episode response already has a new GUID.
+        query = urllib.parse.urlencode({"id": show, "entity": "podcastEpisode",
+                                        "limit": podfetch.APPLE_EPISODE_LIMIT, "country": store})
         status, body, _ = podfetch.http_get(f"{podfetch.ITUNES_LOOKUP}?{query}")
         if status != 200:
             raise LookupError(f"Apple lookup returned HTTP {status}")
