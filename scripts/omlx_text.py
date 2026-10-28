@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import time
 import urllib.parse
 
 import requests
@@ -12,6 +13,8 @@ import omlx_client
 
 TEXT_MODEL = os.environ.get("PODNOTE_MODEL", "gemma-4-26B-A4B-it-qat-4bit")
 ASR_MODEL = "Qwen3-ASR-1.7B-8bit"
+ASYNC_UNLOAD_TIMEOUT = 120
+UNLOAD_POLL_INTERVAL = 1
 
 
 def settings(base_url: str | None = None, model: str = TEXT_MODEL) -> dict:
@@ -35,10 +38,22 @@ def transition(config: dict, model: str, load: bool, timeout: int = 1200) -> dic
     action = "load" if load else "unload"
     url = config["base_url"] + "/v1/models/" + urllib.parse.quote(model, safe="") + f"/{action}"
     response = requests.post(url, headers=omlx_client.headers(config), timeout=timeout)
-    if response.status_code not in {200, 204}:
+    if response.status_code not in ({200, 204, 202} if not load else {200, 204}):
         raise omlx_client.OMLXError(f"oMLX model {action} failed ({response.status_code}): {response.text[:500]}")
-    status = model_status(config)
-    selected = next((item for item in status if item.get("id") == model), None)
-    if selected is None or bool(selected.get("loaded")) is not load:
-        raise omlx_client.OMLXError(f"oMLX model {action} read-back failed for {model}")
-    return selected
+    # HTTP 202 acknowledges an asynchronous unload, not its completion. Keep the
+    # caller's model lock until status confirms that the model is no longer loaded.
+    deadline = time.monotonic() + min(timeout, ASYNC_UNLOAD_TIMEOUT) if response.status_code == 202 else None
+    while True:
+        status = model_status(config)
+        selected = next((item for item in status if item.get("id") == model), None)
+        if selected is None:
+            raise omlx_client.OMLXError(f"oMLX model {action} read-back omitted {model}")
+        if not isinstance(selected.get("loaded"), bool):
+            raise omlx_client.OMLXError(f"oMLX model {action} read-back missing loaded flag for {model}")
+        if selected["loaded"] is load:
+            return selected
+        if deadline is None:
+            raise omlx_client.OMLXError(f"oMLX model {action} read-back failed for {model}")
+        if time.monotonic() >= deadline:
+            raise omlx_client.OMLXError(f"oMLX model unload timed out for {model}")
+        time.sleep(UNLOAD_POLL_INTERVAL)
