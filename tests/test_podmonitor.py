@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -22,8 +22,10 @@ import podshows
 SHOW = "https://podcasts.apple.com/gb/podcast/ask-the-astronomer/id1000000101"
 
 
-def episode(guid: str, title: str = "", duration: str = "3600") -> podfetch.Episode:
-    return podfetch.Episode(guid=guid, title=title or guid, duration=duration)
+def episode(guid: str, title: str = "", duration: str = "3600", enclosure: str = "",
+            published: datetime | None = None) -> podfetch.Episode:
+    return podfetch.Episode(guid=guid, title=title or guid, duration=duration,
+                            enclosure_url=enclosure, published=published)
 
 
 class MonitorTests(unittest.TestCase):
@@ -51,11 +53,13 @@ class MonitorTests(unittest.TestCase):
             "1000000102": {"title": "Make-Do", "folder": "Make-Do", "country": "us", "monitor": False,
                            "hosts": [], "fixes": {}, "advertisers": {}}}), encoding="utf-8")
         self.feed = [episode("old-1"), episode("old-2")]
-        self.apple = {}
+        self.apple: dict[str, str] = {}
 
     def check(self) -> str:
+        hints = [podfetch.AppleEpisodeHint(track_id=url.rsplit("=", 1)[-1], episode_guid=guid)
+                 for guid, url in self.apple.items()]
         with mock.patch.object(podmonitor, "feed_episodes", lambda show, country: list(self.feed)), \
-                mock.patch.object(podmonitor, "apple_links", lambda show, country: dict(self.apple)):
+                mock.patch.object(podmonitor, "apple_episodes", lambda show, country: hints):
             return podmonitor.check()
 
     def queue(self) -> list[str]:
@@ -88,7 +92,7 @@ class MonitorTests(unittest.TestCase):
         self.check()
         self.assertEqual([], self.queue())
 
-    def test_episode_not_yet_on_apple_waits_then_gives_up_after_three_days(self):
+    def test_unresolved_notifies_once_after_three_days_but_recovers_later(self):
         self.check()
         self.feed = [episode("late", "Episode 152")] + self.feed
         self.assertEqual("", self.check())
@@ -96,8 +100,15 @@ class MonitorTests(unittest.TestCase):
         self.apple = {}
         self.assertEqual("", self.check())
         self.clock += timedelta(days=2)
-        self.assertEqual("Podcast not on Apple after 3 days, skipped: Episode 152", self.check())
+        self.assertEqual("Podcast still unresolved on Apple after 3 days (will retry): Episode 152", self.check())
         self.assertEqual("", self.check())
+        entry = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
+        self.assertIn("late", entry["pending"])
+        self.assertNotIn("late", entry["seen"])
+        self.apple = {"late": "https://podcasts.apple.com/gb/podcast/id1000000101?i=1000000000003"}
+        self.assertEqual("", self.check())
+        self.assertEqual(1, len(self.queue()))
+        self.assertNotIn("late", json.loads((self.state / "monitor-state.json").read_text())["1000000101"]["pending"])
 
     def test_episode_appearing_on_apple_later_is_queued(self):
         self.check()
@@ -139,6 +150,71 @@ class MonitorTests(unittest.TestCase):
         state = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
         self.assertIn("HTTP 503", state["last_error"])
         self.assertNotIn("initialised", state)
+
+    def test_different_guid_same_enclosure_queues_once(self):
+        self.check()
+        self.feed = [episode("rss-guid", "Episode", enclosure="https://example.com/a.mp3")] + self.feed
+        hint = podfetch.AppleEpisodeHint(track_id="1000000000005", episode_guid="apple-guid",
+                                         episode_url="https://example.com/a.mp3", title="Episode")
+        with mock.patch.object(podmonitor, "feed_episodes", lambda *_: list(self.feed)), \
+                mock.patch.object(podmonitor, "apple_episodes", lambda *_: [hint]):
+            self.assertEqual("", podmonitor.check())
+            self.assertEqual("", podmonitor.check())
+        self.assertEqual(1, len(self.queue()))
+
+    def test_title_only_does_not_queue_without_date_and_duration(self):
+        self.check()
+        self.feed = [episode("rss-guid", "Episode")] + self.feed
+        hint = podfetch.AppleEpisodeHint(track_id="1000000000005", title="Episode")
+        with mock.patch.object(podmonitor, "feed_episodes", lambda *_: list(self.feed)), \
+                mock.patch.object(podmonitor, "apple_episodes", lambda *_: [hint]):
+            self.assertEqual("", podmonitor.check())
+        self.assertFalse(self.queue())
+        self.assertIn("rss-guid", json.loads((self.state / "monitor-state.json").read_text())["1000000101"]["pending"])
+
+    def test_title_date_duration_matching_requires_close_metadata(self):
+        self.check()
+        published = datetime(2026, 10, 9, tzinfo=timezone.utc)
+        self.feed = [episode("rss-guid", "Episode", "3600", published=published)] + self.feed
+        hint = podfetch.AppleEpisodeHint(track_id="1000000000005", title="Episode",
+                                         published=published, duration_seconds=3600)
+        with mock.patch.object(podmonitor, "feed_episodes", lambda *_: list(self.feed)), \
+                mock.patch.object(podmonitor, "apple_episodes", lambda *_: [hint]):
+            self.assertEqual("", podmonitor.check())
+        self.assertEqual(1, len(self.queue()))
+
+    def test_ambiguous_duplicate_apple_tracks_do_not_queue(self):
+        self.check()
+        self.feed = [episode("rss-guid", "Episode", enclosure="https://example.com/a.mp3")] + self.feed
+        hints = [podfetch.AppleEpisodeHint(track_id=str(id), episode_url="https://example.com/a.mp3")
+                 for id in (1000000000005, 1000000000006)]
+        with mock.patch.object(podmonitor, "feed_episodes", lambda *_: list(self.feed)), \
+                mock.patch.object(podmonitor, "apple_episodes", lambda *_: hints):
+            self.assertEqual("", podmonitor.check())
+        self.assertFalse(self.queue())
+
+    def test_apple_lookup_failure_does_not_age_or_notify(self):
+        self.check()
+        self.feed = [episode("late", "Episode 152")] + self.feed
+        self.check()
+        self.clock += timedelta(days=4)
+        with mock.patch.object(podmonitor, "feed_episodes", lambda *_: list(self.feed)), \
+                mock.patch.object(podmonitor, "apple_episodes", side_effect=LookupError("Apple 503")):
+            self.assertEqual("", podmonitor.check())
+        entry = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
+        self.assertIn("Apple 503", entry["last_error"])
+        self.assertIn("late", entry["pending"])
+        self.assertNotIn("late", entry.get("unresolved_notified", []))
+
+    def test_rejected_queue_add_retains_pending(self):
+        self.check()
+        self.feed = [episode("late")] + self.feed
+        self.apple = {"late": "https://podcasts.apple.com/gb/podcast/id1000000101?i=1000000000003"}
+        with mock.patch.object(podqueue, "add", return_value="Not queued: invalid episode"):
+            self.check()
+        entry = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
+        self.assertNotIn("late", entry["seen"])
+        self.assertIn("invalid episode", entry["last_error"])
 
 
 if __name__ == "__main__":

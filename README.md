@@ -433,7 +433,13 @@ python3 scripts/setup_vad.py                  # only needed if a job reports the
 python3 -m pytest -q tests
 ```
 
-Settings, `names.txt`, the queue, the show registry and the notes are untouched by an update.
+A GitHub PR merge updates the repository, **not** an already installed skill. When deploying a monitor change to an existing Hermes installation, copy its tested `scripts/podmonitor.py` and `tests/test_podmonitor.py` into the installed skill, then run that skill's full tests and verify that the actual cron wrapper points there and the installed monitor matches this checkout:
+
+```bash
+python3 scripts/check_install.py --installed <installed-skill-dir> --wrapper <hermes-scripts-dir>/podcast-monitor.py
+```
+
+A nonzero exit means the cron runtime is still running different code; do not declare the fix deployed. Changes to other skill scripts require their own parity and test checks. Settings, `names.txt`, the queue, the show registry and the notes are untouched by an update.
 
 ## Usage
 
@@ -530,11 +536,7 @@ Every change is logged (`shows-changes.log`) and summarised in a weekly chat dig
 something changed. The user corrects through Hermes ("hosts of X are A, B", "C is not a host of X",
 "monitor X"). `Shows.md` in the podcasts notes folder is a generated, read-only overview.
 
-**Monitoring.** Shows flagged `monitor` in the registry. For each: Apple lookup → RSS feed → episodes
-not seen before; an episode's RSS GUID is matched to Apple's `episodeGuid` to get an ordinary episode
-link for the queue. Not on Apple yet → tried again next check, for up to 3 days. A newly monitored show
-has its back catalogue marked as seen; episodes under 5 minutes (trailers) are skipped. State:
-`PODNOTE_STATE/monitor-state.json`.
+**Monitoring.** Shows flagged `monitor` in the registry. For each: RSS feed → episodes not seen before → Apple catalogue (using the same lookup window as direct episode resolution). Match the RSS item to an Apple track by GUID, then exact enclosure URL, then corroborated title/date/duration with ambiguity rejection; an Apple GUID need not equal the RSS GUID. Unresolved episodes remain pending and are retried on every check. After 3 days the monitor notifies once without marking them seen; a catalogue error is not evidence of absence. A newly monitored show has its back catalogue marked as seen; episodes under 5 minutes (trailers) are skipped. State: `PODNOTE_STATE/monitor-state.json`.
 
 **Validation pass (`podverify.py`).** One pass after every note; sources decide, the model only
 reads. One model session: an inventory call (work types, clean titles, up to six checkable claims
