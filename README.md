@@ -433,7 +433,13 @@ python3 scripts/setup_vad.py                  # only needed if a job reports the
 python3 -m pytest -q tests
 ```
 
-Settings, `names.txt`, the queue, the show registry and the notes are untouched by an update.
+A GitHub PR merge updates the repository, **not** an already installed skill. When deploying a monitor change to an existing Hermes installation, copy its tested `scripts/podmonitor.py` and `tests/test_podmonitor.py` into the installed skill, then run that skill's full tests and verify that the actual cron wrapper points there and the installed monitor matches this checkout:
+
+```bash
+python3 scripts/check_install.py --installed <installed-skill-dir> --wrapper <hermes-scripts-dir>/podcast-monitor.py
+```
+
+A nonzero exit means the cron runtime is still running different code; do not declare the fix deployed. Changes to other skill scripts require their own parity and test checks. Settings, `names.txt`, the queue, the show registry and the notes are untouched by an update.
 
 ## Usage
 

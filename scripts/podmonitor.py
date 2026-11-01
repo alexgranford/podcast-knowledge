@@ -6,24 +6,23 @@
 Monitored shows are the ones flagged in the show registry (podshows.py; "monitor <show>" through
 Hermes), listed in the Shows.md overview.
 
-For each show: Apple lookup -> RSS feed -> episodes not seen before. A new episode's RSS GUID is
-matched to Apple's episodeGuid to get an ordinary Apple episode link, which goes into the podqueue.
-An episode Apple has not indexed yet is simply tried again on the next check (for up to 3 days).
+For each show: RSS feed -> episodes not seen before -> Apple catalogue. RSS GUIDs
+are state keys, not guaranteed Apple identities. Unmatched episodes remain pending
+after the three-day notification so they can recover when indexed later.
 The first time a show is seen, everything already published is marked as seen: only episodes
 released from then on are processed. Trailers and teasers under 5 minutes are skipped.
 
 Nothing is printed on a normal check; queued episodes are announced by the queue when their note
-is ready. A message is printed only when an episode could not be matched to Apple for 3 days.
+is ready. One notification is printed after three days unresolved, without giving up.
 State: PODNOTE_STATE/monitor-state.json.
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,7 +35,7 @@ import podshows  # noqa: E402
 
 STATE = Path(os.environ.get("PODNOTE_STATE", "/var/tmp/podnote-state"))
 MIN_SECONDS = 5 * 60
-GIVE_UP = timedelta(days=3)
+NOTIFY_AFTER = timedelta(days=3)
 
 
 def subscriptions() -> list[tuple[str, str]]:
@@ -52,22 +51,65 @@ def feed_episodes(show: str, country: str) -> list[podfetch.Episode]:
     return podfetch.parse_feed(body, feed).episodes
 
 
-def apple_links(show: str, country: str) -> dict[str, str]:
-    """episodeGuid -> Apple episode link, for the show's most recent episodes on Apple."""
-    links = {}
-    for store in podfetch.storefronts(country):              # the US catalogue first: others lag it
-        # Use the same window as direct-link resolution. Apple can return a stale
-        # 50-episode response while its 200-episode response already has a new GUID.
+def apple_episodes(show: str, country: str) -> list[podfetch.AppleEpisodeHint]:
+    """Query both storefronts once and deduplicate Apple track IDs."""
+    hints: dict[str, podfetch.AppleEpisodeHint] = {}
+    for store in podfetch.storefronts(country):
         query = urllib.parse.urlencode({"id": show, "entity": "podcastEpisode",
                                         "limit": podfetch.APPLE_EPISODE_LIMIT, "country": store})
         status, body, _ = podfetch.http_get(f"{podfetch.ITUNES_LOOKUP}?{query}")
         if status != 200:
-            raise LookupError(f"Apple lookup returned HTTP {status}")
+            raise LookupError(f"Apple lookup returned HTTP {status} ({store})")
         for row in json.loads(body).get("results", []):
-            guid, track = row.get("episodeGuid"), row.get("trackId")
-            if guid and track and guid not in links:
-                links[guid] = f"https://podcasts.apple.com/{country}/podcast/id{show}?i={track}"
-    return links
+            track = row.get("trackId")
+            if not track:
+                continue
+            published = None
+            if row.get("releaseDate"):
+                try:
+                    published = datetime.fromisoformat(row["releaseDate"].replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            duration = row.get("trackTimeMillis")
+            hints.setdefault(str(track), podfetch.AppleEpisodeHint(
+                track_id=str(track), title=row.get("trackName") or "",
+                published=published, episode_guid=str(row.get("episodeGuid") or ""),
+                episode_url=str(row.get("episodeUrl") or ""),
+                duration_seconds=float(duration) / 1000 if duration else None,
+            ))
+    return list(hints.values())
+
+
+def matched_links(show: str, country: str, episodes: list[podfetch.Episode],
+                  hints: list[podfetch.AppleEpisodeHint]) -> dict[str, str]:
+    """Use the resolver's matching, but never queue on an uncorroborated title.
+
+    Multiple Apple tracks pointing at the same RSS item are ambiguous, not two
+    independent episodes. Leave them pending rather than selecting arbitrarily.
+    """
+    candidates: dict[str, set[str]] = {}
+    for hint in hints:
+        try:
+            match = podfetch.match_episode(
+                episodes, guid=hint.episode_guid, enclosure_url=hint.episode_url,
+                title=hint.title, published=hint.published,
+                duration_seconds=hint.duration_seconds,
+            )
+        except podfetch.AmbiguousEpisodeError:
+            continue
+        if match is None:
+            continue
+        if match.match_method == "title_date_duration":
+            rss_duration = podfetch._duration_seconds(match.duration)
+            if not (hint.published and match.published and hint.duration_seconds and rss_duration):
+                continue
+            delta = abs((match.published - hint.published).total_seconds())
+            difference = abs(rss_duration - hint.duration_seconds)
+            if delta > 3 * 86400 or difference > max(60, hint.duration_seconds * 0.05):
+                continue
+        candidates.setdefault(match.guid, set()).add(hint.track_id)
+    return {guid: f"https://podcasts.apple.com/{country}/podcast/id{show}?i={next(iter(tracks))}"
+            for guid, tracks in candidates.items() if len(tracks) == 1}
 
 
 def check() -> str:
@@ -94,28 +136,37 @@ def check() -> str:
         new = [e for e in episodes if e.guid and e.guid not in seen]
         if not new:
             continue
-        links = {}
         try:
-            links = apple_links(show, country)
+            hints = apple_episodes(show, country)
         except Exception as error:
             entry["last_error"] = f"{podqueue.iso(podqueue.now())} {error}"[:300]
+            continue                       # an Apple error does not age pending into a skip
+        links = matched_links(show, country, new, hints)
+        notified = entry.setdefault("unresolved_notified", [])
         for episode in reversed(new):                   # oldest first, so the queue keeps release order
             seconds = podfetch._duration_seconds(episode.duration) or 0
             if 0 < seconds < MIN_SECONDS:
                 entry["seen"].append(episode.guid)
+                entry["pending"].pop(episode.guid, None)
                 continue
             if episode.guid in links:
-                podqueue.add(links[episode.guid], source="monitor")
-                entry["seen"].append(episode.guid)
-                entry["pending"].pop(episode.guid, None)
+                outcome = podqueue.add(links[episode.guid], source="monitor")
+                if outcome.startswith(("Queued (", "Already queued (", "Already in the library;")):
+                    entry["seen"].append(episode.guid)
+                    entry["pending"].pop(episode.guid, None)
+                    if episode.guid in notified:
+                        notified.remove(episode.guid)
+                else:
+                    entry["last_error"] = f"{podqueue.iso(podqueue.now())} {outcome}"[:300]
                 continue
             first = entry["pending"].setdefault(episode.guid, podqueue.iso(podqueue.now()))
-            if podqueue.now() - podqueue.parse_iso(first) >= GIVE_UP:
-                entry["seen"].append(episode.guid)
-                entry["pending"].pop(episode.guid, None)
-                messages.append(f"Podcast not on Apple after 3 days, skipped: {episode.title}")
+            if (episode.guid not in notified and
+                    podqueue.now() - podqueue.parse_iso(first) >= NOTIFY_AFTER):
+                notified.append(episode.guid)
+                messages.append(f"Podcast still unresolved on Apple after 3 days (will retry): {episode.title}")
         current = {e.guid for e in episodes if e.guid}      # never forget an episode still in the feed
         entry["seen"] = [g for g in entry["seen"] if g in current] + [g for g in entry["seen"] if g not in current][-500:]
+        entry["unresolved_notified"] = [g for g in notified if g in current or g in entry["pending"]]
     podqueue.atomic_write(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
     return "\n".join(messages)
 
