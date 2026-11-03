@@ -17,7 +17,7 @@ import json
 import os
 import re
 import socket
-import tempfile
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -31,7 +31,15 @@ USER_AGENT = "podfetch/2.0 (+personal transcription workflow)"
 ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 APPLE_HOST = "podcasts.apple.com"
 MAX_HTTP_BYTES = 32 * 1024 * 1024
-APPLE_EPISODE_LIMIT = 200
+# Each lookup is asked fresh (apple_lookup_rows): a cached answer can be up to a day old. A recent and a
+# larger window are both read and combined by track id, so neither one's answer decides alone.
+APPLE_WINDOWS = (10, 100)               # new releases; episodes still pending (a few days old at most)
+APPLE_HISTORY_LIMIT = 200               # Apple's largest: only for an old episode link neither window lists
+
+
+class AppleLookupError(LookupError):
+    """Apple's catalogue gave no usable answer: not the same as an episode it does not list (yet), and
+    never taken for one."""
 
 
 class AmbiguousEpisodeError(LookupError):
@@ -94,6 +102,7 @@ class Show:
     author: str = ""                                    # itunes:author (Apple shows it as the show's artist)
     owner: str = ""                                     # itunes:owner/itunes:name
     people: list[dict] = field(default_factory=list)    # channel podcast:person tags: {"name", "role"}
+    language: str = ""                                  # the channel's <language> ("en-us"), if any
 
 
 @dataclass
@@ -104,6 +113,7 @@ class AppleEpisodeHint:
     episode_guid: str = ""
     episode_url: str = ""
     duration_seconds: float | None = None
+    description: str = ""
 
 
 # ---------------------------------------------------------------- fetching
@@ -170,30 +180,6 @@ def http_get(
         raise
 
 
-def probe_audio_url(url: str, timeout: int = 20) -> dict:
-    """Follow redirects and inspect a small media prefix without downloading it."""
-    _validate_http_url(url)
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": USER_AGENT, "Range": "bytes=0-63"},
-    )
-    with _OPENER.open(request, timeout=timeout) as response:
-        prefix = response.read(64)
-        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
-        media_signature = (
-            prefix.startswith((b"ID3", b"RIFF", b"OggS", b"fLaC"))
-            or (len(prefix) >= 2 and prefix[0] == 0xFF and prefix[1] & 0xE0 == 0xE0)
-            or (len(prefix) >= 12 and prefix[4:8] == b"ftyp")
-        )
-        return {
-            "status": response.status,
-            "final_url": response.geturl(),
-            "content_type": content_type,
-            "content_range": response.headers.get("Content-Range"),
-            "audio_verified": content_type.startswith("audio/") or media_signature,
-        }
-
-
 def storefronts(country: str) -> list[str]:
     """Apple catalogues to ask, in order: the US one first (other storefronts lag it by hours or
     days), then the link's own."""
@@ -226,22 +212,7 @@ def resolve_feed_url(collection_id: str | int, country: str = "us") -> str:
     return feed_url
 
 
-def _atomic_bytes(path, body: bytes) -> None:
-    """Write a disposable resolver-cache entry atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
+from files import atomic_bytes as _atomic_bytes  # noqa: E402  (the one atomic writer)
 
 
 def resolve_feed_url_cached(
@@ -354,60 +325,81 @@ def refresh_enclosure_if_needed(
     return episode
 
 
+def apple_lookup_rows(collection_id: str | int, country: str, limit: int) -> list[dict]:
+    """The episode rows of one Apple lookup, newest first, as Apple has them now. Raises AppleLookupError
+    when Apple gives no usable answer (an HTTP or network error, or a body that is not a lookup answer);
+    an answer that lists nothing is not an error.
+
+    Apple's CDN (Akamai) keeps each exact lookup address for up to 24 hours and ignores no-cache
+    request headers: on 2026-11-02 the 200-episode answer was a copy from before that day's release.
+    `t` (the time, so it differs on every call) makes each address new, and the answer comes from Apple
+    itself, which ignores the parameter. Apple ignores `sort` on podcast lookups too: rows come newest first."""
+    query = urllib.parse.urlencode({"id": str(collection_id), "entity": "podcastEpisode", "country": country,
+                                    "limit": str(limit), "t": str(int(time.time()))})
+    where = f"{country}, {limit} episodes"
+    try:
+        status, body, _ = http_get(f"{ITUNES_LOOKUP}?{query}")
+    except urllib.error.HTTPError as error:
+        raise AppleLookupError(f"Apple lookup returned HTTP {error.code} ({where})") from error
+    except (OSError, ValueError) as error:
+        raise AppleLookupError(f"Apple lookup failed ({where}): {error}") from error
+    if status != 200:
+        raise AppleLookupError(f"Apple lookup returned HTTP {status} ({where})")
+    try:
+        results = json.loads(body)["results"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise AppleLookupError(f"Apple lookup gave an unreadable answer ({where})") from error
+    if not isinstance(results, list):
+        raise AppleLookupError(f"Apple lookup gave an unreadable answer ({where})")
+    return [row for row in results if isinstance(row, dict) and row.get("trackId")
+            and str(row["trackId"]) != str(collection_id)]          # the show's own row is not an episode
+
+
+def apple_hint(row: dict) -> AppleEpisodeHint:
+    """One lookup row as the facts the feed is matched on. Apple episode ids are not RSS GUIDs: Apple's
+    ``episodeGuid``, when it has one, is carried separately and matched against the feed."""
+    published = None
+    if row.get("releaseDate"):
+        try:
+            published = datetime.fromisoformat(row["releaseDate"].replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    duration = row.get("trackTimeMillis")
+    return AppleEpisodeHint(
+        track_id=str(row["trackId"]),
+        title=row.get("trackName") or "",
+        published=published,
+        episode_guid=str(row.get("episodeGuid") or ""),
+        episode_url=str(row.get("episodeUrl") or ""),
+        duration_seconds=float(duration) / 1000.0 if duration else None,
+        description=_plain_text(str(row.get("description") or row.get("shortDescription") or "")),
+    )
+
+
+def apple_episode_hints(collection_id: str | int, country: str = "us") -> list[AppleEpisodeHint]:
+    """Every episode the recent and the pending window list, in both storefronts, once per track id (the
+    US listing first). Any failed lookup raises AppleLookupError: a partial answer could hide the
+    second track that makes a match ambiguous, so nothing is decided on one."""
+    hints: dict[str, AppleEpisodeHint] = {}
+    for store in storefronts(country):
+        for limit in APPLE_WINDOWS:
+            for row in apple_lookup_rows(collection_id, store, limit):
+                hints.setdefault(str(row["trackId"]), apple_hint(row))
+    return list(hints.values())
+
+
 def episode_hint_from_apple(
     collection_id: str | int,
     episode_id: str | int,
     country: str = "us",
-    limit: int = APPLE_EPISODE_LIMIT,
 ) -> AppleEpisodeHint | None:
-    """The episode as the US catalogue lists it, else as the link's storefront does."""
-    for store in storefronts(country):
-        found = _episode_hint(collection_id, episode_id, store, limit)
-        if found is not None:
-            return found
-    return None
-
-
-def _episode_hint(
-    collection_id: str | int,
-    episode_id: str | int,
-    country: str,
-    limit: int,
-) -> AppleEpisodeHint | None:
-    """List a show's Apple episodes and select exact ``trackId``.
-
-    Apple episode IDs are not RSS GUIDs. When Apple exposes ``episodeGuid``, it
-    is carried separately and can be matched exactly against the feed.
-    """
-    query = urllib.parse.urlencode(
-        {
-            "id": str(collection_id),
-            "entity": "podcastEpisode",
-            "country": country,
-            "limit": str(limit),
-        }
-    )
-    _, body, _ = http_get(f"{ITUNES_LOOKUP}?{query}")
-    for row in json.loads(body).get("results", []):
-        if str(row.get("trackId", "")) != str(episode_id):
-            continue
-        published = None
-        if row.get("releaseDate"):
-            try:
-                published = datetime.fromisoformat(
-                    row["releaseDate"].replace("Z", "+00:00")
-                )
-            except ValueError:
-                pass
-        duration = row.get("trackTimeMillis")
-        return AppleEpisodeHint(
-            track_id=str(episode_id),
-            title=row.get("trackName", ""),
-            published=published,
-            episode_guid=str(row.get("episodeGuid") or ""),
-            episode_url=str(row.get("episodeUrl") or ""),
-            duration_seconds=(float(duration) / 1000.0 if duration else None),
-        )
+    """The episode as the US catalogue lists it, else as the link's storefront does: the recent
+    window, the pending one, then Apple's largest for an older episode; None when none lists it (yet)."""
+    for limit in (*APPLE_WINDOWS, APPLE_HISTORY_LIMIT):
+        for store in storefronts(country):
+            for row in apple_lookup_rows(collection_id, store, limit):
+                if str(row["trackId"]) == str(episode_id):
+                    return apple_hint(row)
     return None
 
 
@@ -458,6 +450,8 @@ def parse_feed(xml_bytes: bytes, feed_url: str = "") -> Show:
             show.owner = _text(owner_name) if owner_name is not None else ""
         elif name == "person" and _text(child):
             show.people.append(_person(child))
+        elif name == "language" and not show.language:
+            show.language = _text(child)
         elif name == "item":
             show.episodes.append(_parse_item(child))
     return show
@@ -529,7 +523,7 @@ def _norm(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _duration_seconds(value: str) -> float | None:
+def parse_duration(value: str) -> float | None:
     value = (value or "").strip()
     if not value:
         return None
@@ -588,7 +582,7 @@ def match_episode(
                 score += 0.12
             elif delta_days > 30:
                 score -= 0.30
-        rss_duration = _duration_seconds(episode.duration)
+        rss_duration = parse_duration(episode.duration)
         if duration_seconds and rss_duration:
             difference = abs(rss_duration - duration_seconds)
             if difference <= max(60.0, duration_seconds * 0.05):

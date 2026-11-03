@@ -1,49 +1,68 @@
-# podcast-knowledge
+<p align="center">
+  <img src="docs/images/logos/applepodcasts.svg" alt="Apple Podcasts" width="44">
+  &nbsp;&nbsp;
+  <img src="docs/images/logos/youtube.svg" alt="YouTube" width="44">
+  &nbsp;&nbsp;&nbsp;➜&nbsp;&nbsp;&nbsp;
+  <img src="docs/images/logos/obsidian.svg" alt="Obsidian" width="44">
+</p>
 
-Turn an Apple Podcasts episode into one durable Markdown note: who took part, a short summary with
-an overall take, the key themes as a synthesis of the whole conversation, the claims checked against
-sources, and the works, ideas and quotes it cites. All model work runs on your own hardware.
+<h1 align="center">podcast-knowledge</h1>
 
-```
-podnote.py "https://podcasts.apple.com/gb/podcast/<show>/id<id>?i=<episode-id>"
-→ NOTE: ~/Notes/Podcasts/Show/2026-09-16 - Episode.md
-  STATUS: complete
-```
+<p align="center">
+  <b>Every episode you follow becomes a note you keep.</b><br>
+  Who spoke, what they argued, which claims hold up, and the books and ideas they cited:<br>
+  written in the episode's own language, on your own hardware, delivered to your chat.
+</p>
 
-## Features
+<p align="center">
+  <a href="#key-features">Key features</a> ·
+  <a href="#new-in-60">New in 6.0</a> ·
+  <a href="#what-it-looks-like">What it looks like</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#installation">Installation</a>
+</p>
 
-- **One link in, one finished note out.** Download, speech recognition, synthesis and validation run
-  unattended; the result is a structured note with participants, a summary, key themes, checked claims
-  and references.
-- **Local by design.** Speech recognition and writing run on your own model server; no audio,
-  transcript or note leaves your network unless you choose a hosted model. Only the optional
-  validation pass sends short search queries.
-- **Built for small models.** The transcript is read in parts of about 1,800 words, the note is built
-  from the part notes, and Python does the bookkeeping (ordering, de-duplication, references). Part size,
-  model and sampling settings were chosen by measurement on real episodes.
-- **Knows who is speaking without diarization.** Hosts come from a show registry that maintains itself,
-  guests from the episode description; names are passed to speech recognition as hints, so unusual
-  names come out spelled right.
-- **Checked against sources.** Claims get a verdict only with cited evidence (Wikipedia, Wikidata,
-  OpenAlex, Brave Search) and a dispute must quote the contradicting sentence; books are named and
-  linked through Open Library; quotes are matched to the transcript's exact words; nothing is removed
-  without evidence.
-- **Runs itself.** A queue with retries, monitoring of followed shows for new episodes, queueing a
-  show's back catalogue by title words and period, and one chat message per finished episode on any
-  channel your agent uses.
-- **Safe by default.** A failed run never replaces a good note; every note is checked against a
-  metadata standard before it is written (your vault's own, if it has one); transcription resumes
-  where it stopped; feeds may only reach public addresses; the cache cleans itself.
-- **Any Markdown folder, Obsidian-ready.** Notes carry properties, callouts and a table of every
-  episode for Obsidian Bases, and read as plain Markdown anywhere else.
-- **Tested.** About 145 tests run on invented data without a model server, on every push.
+## Built with
 
-## What it produces
+A set-up that has been run end to end. Each part does one job, and the scripts work without the optional ones.
 
-Here is part of a real note, made from an episode of *The Rest Is Science*,
-["Why Do We Like Staring Into Fire?"](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284),
-with [Hannah Fry](https://x.com/FryRsquared) and [Michael Stevens](https://x.com/tweetsauce): an hour
-of conversation, ready to read in a few minutes.
+| | product | role | |
+| :---: | --- | --- | --- |
+| <img src="docs/images/logos/applepodcasts.svg" width="28"> <img src="docs/images/logos/youtube.svg" width="28"> | **Apple Podcasts** and **YouTube** | where episodes come from; a podcast can have both, each with a priority | sources |
+| <img src="docs/images/logos/whatsapp.svg" width="28"> <img src="docs/images/logos/telegram.svg" width="28"> | **WhatsApp** and **Telegram** | send a link, follow a show, get each finished note as a short message | chat |
+| 🤖 | **[Hermes Agent](https://hermes-agent.nousresearch.com)** | takes links from chat, runs the scheduled jobs, sends the messages | agent, optional |
+| <img src="docs/images/logos/obsidian.svg" width="28"> | **[Obsidian](https://obsidian.md)** | where the notes live: a vault you can search, link and sync to every device | library |
+| <img src="docs/images/logos/apple.svg" width="28"> | **[oMLX](https://github.com/jundot/omlx)** on Apple Silicon | runs both models locally, one at a time | model server |
+| <img src="docs/images/logos/qwen.svg" width="28"> | **Qwen3-ASR 1.7B** | speech recognition, told each episode's language and the speakers' names | recommended model |
+| <img src="docs/images/logos/google.svg" width="28"> | **Gemma 4 26B A4B** | writes and checks the notes; a mixture of experts that fits a 24 GB Mac | recommended model |
+
+Tested on a 24 GB Apple Silicon Mac. Other hardware and models can work; see [Models](docs/MANUAL.md#models).
+
+## Key features
+
+| | |
+| --- | --- |
+| 🏠 **Private by design**<br>Speech recognition and writing run on your own model server. No audio or transcript leaves your network. | 📚 **Knowledge that accumulates**<br>One note per episode, one folder per show, a table of every episode for Obsidian, and a show registry that learns each show's hosts. |
+| 🔔 **Never miss a release**<br>Follow a show and its new episodes are picked up from Apple and YouTube, made once, and sent to you. | 🎯 **The point in a minute**<br>A one-line take, a short summary and the key themes, each point credited to whoever made it. |
+| ✅ **Checked against sources**<br>Claims are checked against Wikipedia, Wikidata, OpenAlex and web search, and only cited evidence gives a verdict. Books, ideas and quotes are linked and matched. | 🌍 **Any language**<br>The note is written in the episode's own language, and an unclear language is asked about rather than guessed. |
+| 👪 **Share with family and friends**<br>People you let in follow shows and queue episodes from their own chat. You keep control of shows and people. | 🛡️ **Runs itself**<br>Long episodes resume, failures are retried, and a crash loses no note or message. A health check flags a source gone quiet. |
+
+## New in 6.0
+
+- **YouTube** joins Apple Podcasts. A podcast can have both, with priorities, and each episode is made once.
+- **Every episode in its own language**, from speech recognition to the finished note.
+- **Several people** on one installation, each with their own shows and messages.
+- **Crash-safe bookkeeping**, so a queued episode or a message is never lost.
+- **Health at a glance**, plus a check after every Hermes upgrade.
+
+[All the changes ↓](#whats-new-in-60)
+
+## What it looks like
+
+A real note, from *The Rest Is Science*,
+["Why Do We Like Staring Into Fire?"](https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284)
+with [Hannah Fry](https://x.com/FryRsquared) and [Michael Stevens](https://x.com/tweetsauce): an hour of conversation,
+read in a few minutes.
 
 <p align="center">
   <picture>
@@ -52,8 +71,19 @@ of conversation, ready to read in a few minutes.
   </picture>
 </p>
 
+**Every note follows one template:**
+
+| section | what you get |
+| --- | --- |
+| **Header** | show · date · length · a link back to the episode |
+| **Summary** | who took part (hosts, then guests), the one-line take, and a short paragraph on where the conversation lands |
+| **Key themes** | 3 to 8 themes in episode order, each with its essence and one bullet per point, saying who made it |
+| **Claims checked** | ✅ supported or ⚠️ disputed, each with its sources; claims with no verdict are left out |
+| **References** | books, films, papers, laws, ideas and quotes, linked to Open Library or Wikipedia and matched to what was said |
+| **Properties** | show, episode, date, hosts, guests, language, duration and tags, ready for Obsidian Bases |
+
 <details>
-<summary>The same excerpt as Markdown</summary>
+<summary>The same note as Markdown</summary>
 
 ```markdown
 ---
@@ -90,10 +120,6 @@ duration: 3684
 - **A chemical process** — Michael Stevens argues that fire is a verb, specifically the process of combustion, rather than a noun or a single substance like a gas or liquid.
 - **The fire tetrahedron** — Michael Stevens notes that combustion requires four components, adding a fourth element to the classic triangle of fuel, heat, and oxygen.
 - **Mechanisms of extinction** — Fire can be stopped by removing one part of the triangle, such as using water to absorb heat or sand/carbon dioxide to smother the oxygen.
-- **Chemical interference** — Halon extinguishers work by introducing chemicals like bromine that react with free radicals more strongly than oxygen does, interrupting the chemical reaction.
-- **The role of electrons** — Hannah Fry and Michael Stevens explain that light is emitted when electrons fall to lower energy levels, a process involving photons.
-
-### The chemistry of flames and light
 …
 
 ## Claims checked
@@ -101,203 +127,175 @@ duration: 3684
 | Claim | Who | Verdict | Sources |
 | --- | --- | --- | --- |
 | Neanderthals in Suffolk were using fire purposefully 400,000 years ago. | — | ✅ Supported by sources — Evidence confirms Neanderthals used fire in Suffolk, England, approximately 400,000 years ago. | [^1] [^2] [^3] [^4] [^5] |
-| … | | | |
 
 ## References
 
 ### Ideas
 - [Fire triangle](https://en.wikipedia.org/wiki/Fire_triangle) — Michael Stevens used to describe the three requirements for combustion: fuel, heat, and oxygen.
-- [Chemiluminescence](https://en.wikipedia.org/wiki/Chemiluminescence) — used to explain the blue light in a flame.
-- [Black-body radiation](https://en.wikipedia.org/wiki/Black-body_radiation) — used to explain the red/orange glow of soot particles.
 - [Attention restoration theory](https://en.wikipedia.org/wiki/Attention_restoration_theory) (Stephen and Rachel Kaplan) — cited to explain the benefits of soft fascination.
-- [Biophilia hypothesis](https://en.wikipedia.org/wiki/Biophilia_hypothesis) — invoked by Michael Stevens to explain the human connection to nature.
 …
-
-[^1]: ['It is the most exciting discovery in my 40-year career': Archaeologists uncover evidence that Neanderthals made fire 400,000 years ago in England / Live Science](https://www.livescience.com/archaeology/human-evolution/it-is-the-most-exciting-discovery-in-my-40-year-career-archaeologists-uncover-evidence-that-neanderthals-made-fire-400-000-years-ago-in-england) — Flecks of pyrite found at a more than 400,000-year-old archaeological site in Suffolk, in eastern England, push back archaeologists' evidence for controlled fir
 ```
 
 </details>
 
-Every note has the same parts:
+**In your chat** as soon as the note is ready, on WhatsApp or Telegram (the real message for this episode):
 
-- **Properties:** origin, model, dates, tags, show, episode, hosts, guests, publisher, source and duration.
-- **Summary:** the participants (hosts first, then guests), one sentence on what is discussed (also used
-  as the chat message preview), and one paragraph on what the episode is about and where it lands.
-- **Key themes:** a synthesis across the whole episode, grouped by subject, each with its essence and
-  one bullet per point, saying who made it.
-- **Claims checked:** ✅ supported by sources or ⚠️ disputed, with footnoted sources; claims without a
-  verdict are left out, and the section is omitted when none has one.
-- **References:** books (with Open Library links), films and TV, papers and reports, laws, other works,
-  ideas (linked to Wikipedia) and quotes (matched to the transcript); omitted when nothing is cited.
-- **Verification log:** a collapsed list of what the validation pass changed.
+> 💬 **podcast-knowledge** · WhatsApp
+>
+> 🟢 **The Rest Is Science: Why Do We Like Staring Into Fire?**  
+> *Hannah Fry (host), Michael Stevens (host)*
+>
+> > Fire is a complex chemical process rather than a single substance, playing a fundamental role in both human evolutionary history and modern psychological attention.
+>
+> https://podcasts.apple.com/gb/podcast/the-rest-is-science/id1853007888?i=1000791914284
+>
+> **Key themes**  
+> • **The nature and mechanics of combustion**  
+> &nbsp;&nbsp;&nbsp;– A chemical process  
+> &nbsp;&nbsp;&nbsp;– The fire tetrahedron  
+> &nbsp;&nbsp;&nbsp;– Mechanisms of extinction  
+> &nbsp;&nbsp;&nbsp;– Chemical interference  
+> &nbsp;&nbsp;&nbsp;– The role of electrons  
+> • **The chemistry of flames and light**  
+> &nbsp;&nbsp;&nbsp;– Flame coloration and soot  
+> &nbsp;&nbsp;&nbsp;– Thermal radiation  
+> &nbsp;&nbsp;&nbsp;– Phase composition  
+> &nbsp;&nbsp;&nbsp;– Oxygen and plasma  
+> &nbsp;&nbsp;&nbsp;– The dark zone  
+> • **Evolutionary history and human use of fire**  
+> &nbsp;&nbsp;&nbsp;– Atmospheric oxygen  
+> &nbsp;&nbsp;&nbsp;– Ancient wildfires  
+> &nbsp;&nbsp;&nbsp;– Human control of fire  
+> &nbsp;&nbsp;&nbsp;– Intentional fire making  
+> &nbsp;&nbsp;&nbsp;– Social and biological impact  
+> • … two more themes, each with its points
 
-Themes are a synthesis across the whole episode, grouped by subject, about one per 12 minutes
-(3 to 8). References is omitted when the episode cites nothing.
+## Architecture
 
+The moving parts, and how one episode travels through them.
 
-## Quick start
-
-1. Run a model server with a speech-recognition model and a text model (see "Models").
-2. On the machine that runs the scripts (Python 3.11+, `ffmpeg`):
-   ```bash
-   git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
-   python3 -m pip install -r requirements.txt
-   cp .env.example .env && chmod 600 .env       # set OMLX_BASE_URL, OMLX_API_KEY, PODNOTE_ROOT
-   python3 scripts/setup_vad.py                 # the speech-detection runtime
-   python3 scripts/podnote.py "<an Apple Podcasts episode link>"
-   ```
-3. To run it hands-off from a chat app, follow "Running under Hermes": the settings go in Hermes's
-   `.env`, and three scheduled jobs run the queue, the show monitor and a weekly digest.
-
-The rest of this file explains the design, the setup in detail, operations and the output.
-
-## Why it is shaped like this
-
-A small local model reads 2,000 words carefully and 30,000 words badly. So every model call is kept
-small, and Python does everything a model does not need to do. The rules:
-
-- **The model reads at most ~1,800 words of transcript at a time.** The transcript is split at
-  sentence boundaries and each part gets its own call, which writes one bullet per distinct point
-  and lists the works and quotes the part cites. A final remainder under a quarter of the limit is
-  folded into the last part, so the last part can reach ~2,250 words. Larger parts were tested and
-  lose detail steadily.
-- **The note is built from the part notes, never from the transcript.** Two short calls over them
-  write the themes and then the summary. If any call fails, no note is written and the old one stays:
-  a partial note is a failure. The finished part notes stay cached, so the next run redoes only what
-  failed.
-- **References are assembled by Python**, not by a model: the parts' tagged works and quotes,
-  de-duplicated, in episode order. They are raw — titles and quotes come from automatic
-  transcription — and are cleaned by the separate validation pass.
-- **No scores and no truth judgements inside this run.** Checking claims needs external sources;
-  that is the separate validation pass (`podverify.py`).
-- **No retries, no repair calls, no scheduler, no semantic validators inside this run.** One
-  process exits 0 or 1. The only checks are mechanical: did the model stop naturally, is there
-  text. Anything that feeds it episodes (a queue, a show monitor) lives outside it.
-
-`scripts/podnote.py` (about 1,100 lines) is the whole note pipeline, over a separate acquisition and
-speech-recognition layer.
-
-## How it fits together
-
-Dashed boxes are optional.
+### The pieces
 
 ```mermaid
-flowchart LR
-    you(["You"])
-    chat["Chat channel<br/>Telegram · WhatsApp · Discord<br/>Signal · API"]
-    agent["Hermes agent<br/>queues links · runs the schedule<br/>sends updates"]
-    skill["podcast-knowledge<br/>queue · transcribe<br/>write · validate"]
-    models["Model server<br/>speech model + text model<br/>oMLX · Ollama · LM Studio<br/>vLLM · a hosted API"]
-    subgraph online["Online sources"]
+flowchart TB
+    people(["You and the people you share with"])
+    chat["WhatsApp · Telegram"]
+    agent["Hermes Agent"]
+    subgraph skill["podcast-knowledge"]
         direction TB
-        apple[("Apple Podcasts<br/>catalogue · feeds · audio")]
-        refs[("Wikipedia · Wikidata<br/>Open Library · OpenAlex")]
-        brave[("Brave Search<br/>optional")]
+        queue["Queue and monitor"]
+        store[("Queue store<br/>queue · requests · messages")]
+        podnote["Note pipeline"]
+        verify["Validation pass"]
     end
-    notes[("Notes folder<br/>Markdown · Obsidian vault")]
-    devices["Your devices<br/>any sync"]
+    sources["Apple Podcasts · YouTube"]
+    models["oMLX<br/>Qwen3-ASR · Gemma 4"]
+    refs["Wikipedia · Wikidata<br/>Open Library · OpenAlex · Brave"]
+    notes[("Obsidian vault")]
 
-    you -- "episode link" --> chat --> agent --> skill
-    agent -. "note ready" .-> chat
-    skill <--> models
-    skill --> online
-    skill --> notes
-    notes -.-> devices
-
-    classDef optional stroke-dasharray: 5 5
-    class chat,agent,brave,devices optional
+    people --> chat --> agent --> queue
+    queue --- store
+    queue --> podnote --> verify
+    sources --> podnote
+    podnote <--> models
+    verify <--> models
+    verify --> refs
+    podnote --> notes
+    verify --> notes
+    store -. "note ready" .-> agent
 ```
 
 | component | role | required |
 | --- | --- | --- |
-| the scripts (this repository) | queue, download, transcription, synthesis, validation | yes |
+| the scripts (this repository) | queue, sources, transcription, synthesis, validation | yes |
 | model server | serves the speech-recognition and text models over an HTTP API | yes |
 | notes folder | where notes are written; any folder the scripts can write to | yes |
-| state and cache folders | queue, show registry and logs; transcripts and working files per episode | yes (two folders) |
+| state and cache folders | the queue's store, show registry, monitor state and logs; transcripts and working files per episode | yes (two folders) |
 | speech-detection runtime | Silero VAD in its own small venv, built by `scripts/setup_vad.py`; the model is bundled | yes |
+| yt-dlp | resolves YouTube videos (in a venv of its own, with Node.js or Deno) | for YouTube |
 | [Hermes agent](https://hermes-agent.nousresearch.com) | takes links from chat, runs the scheduled jobs, sends the messages | optional |
 | web services | evidence for the validation pass | Wikipedia, Wikidata, Open Library, OpenAlex: no key; Brave Search: optional key |
 
-These pieces can share one machine or be spread across a network: for example the agent and the
-scripts on an always-on computer, the model server on a machine with a capable GPU or unified memory,
-and the notes folder synced to your devices. The scripts themselves need no GPU: they download audio,
-cut it and move text. Without an agent they run the same from a shell or any scheduler.
+- **Placement** — the pieces can share one machine or be spread across a network: the agent and scripts on an always-on computer, the model server on a machine with a capable GPU or unified memory, the notes folder synced to your devices.
+- **No GPU for the scripts** — they download audio, cut it and move text.
+- **No agent needed** — the scripts run the same from a shell or any scheduler.
 
-## Models
+### One episode, step by step
 
-The skill was built and tested on a **24 GB Apple Silicon Mac** running
-[oMLX](https://github.com/jundot/omlx), with these two models. Treat them as the reference setup and
-a guide, not a requirement: other memory sizes and other hardware will have their own best models.
+```mermaid
+flowchart TD
+    link["Episode link<br/>Apple Podcasts or YouTube"] --> add{"Queue it?<br/>podqueue add"}
+    add -- "already in the library<br/>or queued, from either source" --> skip(["Not queued"])
+    add -- "language unclear" --> ask(["Ask the user<br/>which language"])
+    add -- "queued, language stated" --> resolve["Resolve and download<br/>source connector"]
+    resolve --> asr["Speech recognition<br/>~15-minute windows,<br/>told the language and the names"]
+    asr -- "hint read back or<br/>too few words: redo" --> asr
+    asr --> parts["Part notes<br/>~1,800 words each"]
+    parts -- "wrong language: ask again" --> parts
+    parts --> body["Themes, summary, tags"]
+    body --> check{"Note check"}
+    check -- "fails" --> keep(["Nothing written;<br/>the old note stays"])
+    check -- "passes" --> note[("Note")]
+    note --> verify["Validation pass<br/>names · works · quotes · claims"]
+    verify --> message(["Chat message"])
+```
 
-| role | model on the 24 GB reference setup | setting |
+- **Resumable** — every stage keeps its results on disk; a stopped run (a timeout, the model server gone) resumes where it was, without redoing downloaded audio, transcribed windows or finished part notes.
+
+### Data model
+
+```mermaid
+flowchart TB
+    person["Person"] -- "follows" --> show["Show"]
+    person -- "asks for" --> episode["Episode"]
+    person -- "is sent" --> message["Message"]
+    show -- "is published on" --> source["Source<br/>Apple · YouTube"]
+    show -- "has" --> host["Host"]
+    source -- "is watched through" --> watch["Feed watch"]
+    show -- "publishes" --> episode
+    episode -- "waits as" --> queue["Queue entry"]
+    episode -- "is worked in" --> job["Job"]
+    episode -- "becomes" --> note["Note"]
+```
+
+| folder | holds | private |
 | --- | --- | --- |
-| speech recognition | `Qwen3-ASR-1.7B-8bit` | `OMLX_ASR_MODEL` |
-| everything else: part notes, themes, summary, tags, validation | `gemma-4-26B-A4B-it-qat-4bit` (Google's quantization-aware-trained 4-bit Gemma 4, a 26B mixture of experts with about 4B active parameters) | `PODNOTE_MODEL` |
+| state (`PODNOTE_STATE`) | people, shows, the queue's store, monitor state, logs, your `names.txt` | yes |
+| cache (`PODNOTE_CACHE`) | one working folder per episode, cleaned after `PODNOTE_KEEP_DAYS` | yes |
+| notes (`PODNOTE_ROOT`) | the notes: the only output meant to be read | yours |
 
-Why these two, on 24 GB (the text model peaks near 19 GB, and only one model is loaded at a time):
+**Where each entity lives, one of what, and who writes it:**
 
-- On a six-episode comparison the QAT Gemma made far fewer garbled words than the plain
-  `gemma-4-26b-a4b-it-4bit` conversion (about 1–2 against 6) and kept more of each episode in its
-  themes, for about 30% more time.
-- The 26B mixture of experts was about five times faster than a dense 9B model and attributed
-  arguments to speakers more reliably; a 12B Gemma also worked.
-- Sampling: Gemma's own defaults (temperature 1.0, top_p 0.95, top_k 64), no presence or frequency
-  penalty (it mangled repeated words), thinking off (about five times the time, no clear gain). The
-  comment in `podnote.ask()` records what each alternative did.
-- Transcript parts of about 1,800 words: larger parts lost detail steadily.
-- The 1.7B speech model leaves the memory to the text model and spells names well when given hints.
+| entity | stored in | one entry is | written by | kept |
+| --- | --- | --- | --- | --- |
+| person | `users.json` (mode 600) | one person, by a short name (`robin`) | `podusers.py`, the agent, `users.current` for a newcomer | until removed |
+| identity | inside a person | one `platform:id`, normalised (every WhatsApp form becomes the number) | `podusers.py identity` | with the person |
+| show | `shows.json` | one show: its Apple show id, or `yt:<channel id>` | `podshows.py` | always (episodes are its notes) |
+| source | inside a show | one platform of one show | `podshows.py link`, `priority` | with the show |
+| host | inside a show | one person in one role on one show | the registry's evidence rules, or you (locked) | always; former hosts keep an end date |
+| queue entry | `app.sqlite3`, table `jobs` | one queued link (the episode's clean link) | `podqueue.py` | until made, failed or removed |
+| request | `app.sqlite3`, table `requests` | one time a person asked for an episode | `podqueue.py` | always; nothing prunes it yet |
+| message | `app.sqlite3`, table `outbox` | one message to one person | `podqueue.py` | always; nothing prunes it yet |
+| feed watch | `monitor-state.json` | one watched feed, playlist or channel: the Apple show id, or `youtube:<playlist or channel id>` | `podmonitor.py` | while the show is followed |
+| job | `PODNOTE_CACHE/jobs/<job id>/` | one source copy of an episode: `podcast-<id>` or `youtube-<id>` | `podnote.py`, `podverify.py` | `PODNOTE_KEEP_DAYS` after last use |
+| ASR window | `asr-state.sqlite3` | one transcription window of a job | the transcription layer | with the job |
+| note | `PODNOTE_ROOT/PODNOTE_NOTES_DIR/<show>/<date> - <title>.md` | one episode; other copies go to `<state>/superseded-notes/` | `podnote.py`, `podverify.py` | yours |
 
-With less memory, a smaller text model; with more, a larger one may write better notes. If you run
-the skill on other hardware or models, an issue with what worked (memory, models, speed, note quality)
-is welcome: the aim is a short table of tested setups per memory size.
+- **Phone numbers and chat ids** live only in `users.json`; never in a note, `Shows.md` or a log.
 
-**Inference engines.** The skill talks to its models through the standard OpenAI-compatible APIs
-(`/v1/chat/completions` for text, `/v1/audio/transcriptions` for speech), so the inference engine is
-interchangeable: oMLX is the one it was built and tested on, and engines such as
-[Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), the `llama.cpp` server,
-[vLLM](https://github.com/vllm-project/vllm) and `mlx_lm.server`, or a hosted API such as
-[OpenRouter](https://openrouter.ai), fill the same role. The note-writing step already accepts any of
-them (`PODNOTE_BASE_URL`, `PODNOTE_API_KEY`, `PODNOTE_MODEL`); in this release speech recognition and
-the validation pass still use oMLX's model loading, and support for other engines there is planned for
-upcoming releases. A hosted API sends the transcript and notes to that provider; with a local engine
-everything stays on your network.
+## Prerequisites
 
-## Who said what
-
-Automatic transcription has no speaker labels, so attribution comes from the text:
-
-- The episode description is cleaned (links, sponsor reads and calls to action removed; guest
-  introductions and chapter lists kept, even when show notes glue them to a sponsor link) and given
-  to every part call and to the summary.
-- The part prompt credits a point to a person only when the text shows it is theirs, treats whoever
-  is addressed by name as the listener, and never guesses between several hosts.
-- The themes call must keep attributions exactly as the part notes give them.
-- The summary lists the hosts who appear in the notes (all of a show's hosts if the notes name
-  none, since hosts are often never addressed by name), then the guests from the description.
-
-On a six-episode test with 17 attributions checked against the transcripts: 12 right, 2 wrong,
-3 left unattributed. The errors sit in fast exchanges that cannot be resolved from text alone.
-
-## Requirements
-
-**Mandatory**
-
-- Python 3.11+ and `ffmpeg` (with `ffprobe`) on the machine that runs the scripts
-- A model server with a speech-recognition model and a text model (see "Models")
-- Network access to Apple Podcasts (lookup, feeds, audio)
-- A notes folder, and folders for state and cache the scripts can write to (the cache holds about
-  0.5–1 MB of text per episode; audio only while it is being transcribed)
-
-**Optional**
-
-- [Hermes agent](https://hermes-agent.nousresearch.com): queueing from chat, scheduled jobs and
-  messages on any channel it supports (Telegram, WhatsApp, Discord, Signal and others)
-- A [Brave Search API](https://brave.com/search/api/) key: web evidence for claims and the real
-  names of cited books
-- Network access to Wikipedia, Wikidata, Open Library and OpenAlex: without it the validation pass
-  does less, the notes are still written
-- Obsidian, or any Markdown editor, to read the notes
-- A metadata standard of your own in the notes folder (see "Where notes go")
+| need | what | notes |
+| --- | --- | --- |
+| required | Python 3.11+ and `ffmpeg` (with `ffprobe`) | on the machine that runs the scripts |
+| required | a model server with a speech and a text model | see [Models](docs/MANUAL.md#models) |
+| required | a notes folder, a state folder and a cache folder | the cache holds about 0.5–1 MB of text per episode; audio only while it is transcribed |
+| required | network access to Apple Podcasts | catalogue, feeds, audio |
+| for YouTube | [yt-dlp](https://github.com/yt-dlp/yt-dlp) in its own venv, with Node.js or Deno | see [YouTube](docs/MANUAL.md#youtube) |
+| optional | [Hermes agent](https://hermes-agent.nousresearch.com) | queueing from chat, scheduled jobs, messages on any channel it supports |
+| optional | a [Brave Search API](https://brave.com/search/api/) key | web evidence for claims, the real names of cited books |
+| optional | Wikipedia, Wikidata, Open Library, OpenAlex | without them the validation pass does less; notes are still written |
+| optional | a metadata standard of your own in the notes folder | see [Notes: format and checks](docs/MANUAL.md#notes-format-and-checks) |
 
 | file | what it installs | where |
 | --- | --- | --- |
@@ -305,126 +303,75 @@ On a six-episode test with 17 attributions checked against the transcripts: 12 r
 | `requirements-vad.txt` | `onnxruntime`, `numpy` | the speech-detection venv; `scripts/setup_vad.py` installs it |
 | `requirements-dev.txt` | the above plus `pytest` | only for running the tests |
 
-## Setup
+## Installation
 
-### 1. Get the code and its packages
+Run these on the machine that will run the scripts.
 
-```bash
-git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
-python3 -m pip install -r requirements.txt
-ffmpeg -version                                # must work; install ffmpeg first if it does not
-```
+1. **Code and packages.**
 
-### 2. Prepare the model server
+   ```bash
+   git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
+   python3 -m pip install -r requirements.txt
+   ffmpeg -version                                # must work; install ffmpeg first if it does not
+   ```
 
-Run a model server where the scripts can reach it, give it an API key, and make a speech-recognition
-model and a text model available. On the reference setup that is [oMLX](https://github.com/jundot/omlx)
-with these ids (see "Models" for other servers and memory sizes):
+2. **Model server.**
+   - Run it where the scripts can reach it, with an API key, and the speech and text models available.
+   - With oMLX the skill loads and unloads the models itself, one at a time, so both fit in memory.
+   - Plain `http://` is accepted only for a private or loopback address; anything else needs `https://`.
+3. **Settings** (see [Configuration](docs/MANUAL.md#configuration); under Hermes they go in Hermes's own `.env` instead).
 
-- `Qwen3-ASR-1.7B-8bit` (speech recognition; another model with `OMLX_ASR_MODEL`)
-- `gemma-4-26B-A4B-it-qat-4bit` (everything else; another model with `PODNOTE_MODEL`)
+   ```bash
+   cp .env.example .env && chmod 600 .env
+   cp names.example.txt "$PODNOTE_STATE/names.txt"   # optional: your own fixes for misheard names
+   ```
 
-With oMLX the skill loads and unloads the models itself, one at a time, so both fit in memory. Plain
-`http://` is accepted only for a private or loopback address; anything else needs `https://`.
+4. **Speech-detection runtime:** `python3 scripts/setup_vad.py`.
+   - Installs `requirements-vad.txt` into its own venv and self-tests the bundled Silero model.
+   - Writes `READY.json` with checksums of the model, `scripts/podcast_vad.py`, the window policy and the installed versions.
+   - Transcription checks that record before every job, and stops with "VAD runtime readiness/hash validation failed" after an update that changed one of them: run the script again.
+5. **For YouTube:** yt-dlp in a venv of its own, and `PODNOTE_YTDLP` pointing at it.
 
-### 3. Settings and keys
+   ```bash
+   python3 -m venv /path/to/yt-dlp && /path/to/yt-dlp/bin/pip install "yt-dlp[default]"
+   # .env: PODNOTE_YTDLP=/path/to/yt-dlp/bin/yt-dlp
+   ```
 
-```bash
-cp .env.example .env && chmod 600 .env       # then fill it in (under Hermes: see "Running under Hermes")
-cp names.example.txt names.txt               # optional: your own fixes for misheard names
-```
+6. **Run the tests** before the first episode (see [Testing and validation](docs/MANUAL.md#testing-and-validation)).
 
-Required: `OMLX_BASE_URL` and `OMLX_API_KEY`. Worth setting: `PODNOTE_ROOT` (where notes go),
-`PODNOTE_CACHE`, `PODNOTE_STATE`, `PODNOTE_VAD_RUNTIME` (all folders the scripts can write to),
-`PODNOTE_CONTACT` (asked for by Wikipedia and Open Library) and, optionally, `PODNOTE_BRAVE_API_KEY`.
+### Running under Hermes
 
-### 4. The speech-detection runtime
+Hermes takes links from chat, runs the scheduled jobs and sends the messages.
 
-```bash
-python3 scripts/setup_vad.py                 # creates PODNOTE_VAD_RUNTIME/venv and its readiness record
-```
+1. **Install the skill** in Hermes's skills folder, for example `~/.hermes/skills/media/podcast-knowledge/` (in Docker `/opt/data/skills/…`).
+   - Install `requirements.txt` into the Python Hermes runs tools with: in the Docker image, `/opt/hermes/.venv`.
+   - Add the packages and `ffmpeg` to the image, so a rebuild keeps them.
+2. **Settings** go in Hermes's `.env`; the skill folder needs none. Hermes rereads it for every cron run, so no restart is needed.
+3. **Speech-detection runtime:** build it once, with the same Python (`scripts/setup_vad.py`).
+4. **Wrappers:** copy `hermes/` to `~/.hermes/scripts/` (in Docker `/opt/data/scripts/`), and check each with a dry start, which prints the script and Python it would run and runs nothing:
 
-It installs `requirements-vad.txt` into its own venv, runs a self-test on the bundled Silero model and
-writes `READY.json` with checksums of the model, `scripts/podcast_vad.py`, the window policy and the
-installed versions. Transcription checks that record before every job, so after an update that changes
-one of those files it stops with "VAD runtime readiness/hash validation failed": run the script again.
+   ```bash
+   python3 ~/.hermes/scripts/podcast-queue.py --check
+   ```
 
-### 5. Check and run
-
-```bash
-python3 -m pip install -r requirements-dev.txt && python3 -m pytest -q tests     # no model server needed
-python3 scripts/podnote.py "https://podcasts.apple.com/us/podcast/<show>/id<id>?i=<episode-id>"
-python3 scripts/podverify.py "<the note path it printed after NOTE:>"
-```
-
-The tests use invented data and need neither the model server nor your settings; a few that need the
-speech runtime or `ffmpeg` are skipped without them.
-
-Configuration is environment variables. **Required** settings must be set; **recommended** ones
-have defaults that work for a quick test but belong somewhere permanent; **optional** ones add features.
-
-| variable | needed | default | meaning |
-| --- | --- | --- | --- |
-| `OMLX_BASE_URL` | required | `http://127.0.0.1:8000` | model server address (speech recognition, and the text model unless `PODNOTE_BASE_URL` is set) |
-| `OMLX_API_KEY` | required | — | model server key; any non-empty value if your server has no auth |
-| `PODNOTE_ROOT` | required | `~/Notes` | the folder notes go under: any local folder (an Obsidian vault works well) |
-| `PODNOTE_CACHE` | recommended | `/var/tmp/podnote` | working folder per episode (transcript, part notes, records) |
-| `PODNOTE_STATE` | recommended | `/var/tmp/podnote-state` | queue, show registry, monitor state, logs, locks and the ASR database |
-| `PODNOTE_VAD_RUNTIME` | recommended | `/var/lib/podnote/vad-runtime` | speech-detection venv and readiness record |
-| `PODNOTE_CONTACT` | recommended | — | your e-mail or URL, sent in the User-Agent to Wikipedia, Open Library and the others, as they ask of automated clients (raises their rate limits) |
-| `OMLX_ASR_MODEL` | optional | `Qwen3-ASR-1.7B-8bit` | speech-recognition model id |
-| `PODNOTE_MODEL` | optional | `gemma-4-26B-A4B-it-qat-4bit` | text model id |
-| `PODNOTE_BASE_URL`, `PODNOTE_API_KEY` | optional | — | a separate OpenAI-compatible server or hosted API for writing the notes (see "Models") |
-| `PODNOTE_BRAVE_API_KEY` | optional | — | web search (Brave Search API) for claim evidence and the names of cited books |
-| `PODNOTE_NOTES_DIR` | optional | `Podcasts` | podcasts folder inside `PODNOTE_ROOT`: one folder per show, plus `Podcasts.base` and `Shows.md` |
-| `PODNOTE_KEEP_DAYS` | optional | `30` | days an episode's transcript and working files are kept after their last use (audio goes as soon as the transcript is complete) |
-| `PODNOTE_SCRIPT_TAG` | optional | — | the tag your notes folder gives notes written by scripts (used on `Shows.md`) |
-| `PODNOTE_SECTION_WORDS` | optional | `1800` | transcript words per part; for experiments |
-| `PODNOTE_TEST_RULES` | optional | — | tests only: your notes folder's `_meta` folder, to test against its own metadata standard |
-
-Every key and setting is read from the environment, from one place:
-
-- **Under Hermes:** Hermes's own `.env` (`~/.hermes/.env`; in Docker `/opt/data/.env`). Hermes loads
-  it and hands the settings to the cron jobs. The skill folder then needs no `.env`. The keys and
-  settings the skill needs are declared in `SKILL.md` (`required_environment_variables`), so Hermes
-  reports any that are missing and can ask for them.
-- **Elsewhere:** `.env` in the skill folder, copied from `.env.example` (git-ignored, keep it
-  `chmod 600`). `scripts/settings.py` loads it for every script and the tests, and never overrides a
-  variable already set, so the shell still wins.
-
-## Running under Hermes
-
-1. Put the skill in Hermes's skills folder, for example `~/.hermes/skills/media/podcast-knowledge/`
-   (in Docker `/opt/data/skills/…`), and install `requirements.txt` into the Python Hermes runs tools
-   with (in the Hermes Docker image, `/opt/hermes/.venv`; add the packages and `ffmpeg` to the image
-   so a rebuild keeps them).
-2. Put the settings in Hermes's `.env`, not in the skill folder: `OMLX_BASE_URL`, `OMLX_API_KEY`,
-   `PODNOTE_ROOT`, `PODNOTE_CACHE`, `PODNOTE_STATE`, `PODNOTE_VAD_RUNTIME`, `PODNOTE_CONTACT`, and
-   `PODNOTE_BRAVE_API_KEY` if you use Brave. Hermes rereads `.env` for every cron run; no restart needed.
-3. Build the speech-detection runtime once, with the same Python: `scripts/setup_vad.py`.
-4. Copy the three wrappers from `hermes/` to `~/.hermes/scripts/` (in Docker `/opt/data/scripts/`) and
-   create the cron jobs. Each runs a script with no model and sends its output to your chat; empty
-   output sends nothing:
+5. **Cron jobs:** each runs a script with no model and sends its output to `<channel>` (`telegram`, `discord`, `signal`, `platform:chat_id` for WhatsApp, or `origin`); empty output sends nothing.
 
    ```bash
    hermes cron create "*/5 * * * *" --name podcast-queue --script podcast-queue.py --no-agent --deliver <channel>
    hermes cron create "7,37 * * * *" --name podcast-monitor --script podcast-monitor.py --no-agent --deliver <channel>
    hermes cron create "15 7 * * 1" --name podcast-shows-digest --script podcast-shows-digest.py --no-agent --deliver <channel>
+   hermes cron create "40 5 * * 0" --name yt-dlp-update --script yt-dlp-update.py --no-agent --deliver <channel>   # with YouTube
    ```
 
-   `<channel>` is any Hermes delivery target: `telegram`, `discord`, `signal`, a platform and chat as
-   `platform:chat_id` (WhatsApp, for example), or `origin`.
-5. Send an Apple Podcasts episode link to Hermes on any channel it serves (a chat app, or a client of
-   its API server). The agent queues it (see `SKILL.md`), and
-   within a few minutes the queue job starts; a message follows when the note is written or has failed.
+6. **First link:** send one to Hermes. The agent queues it (see `SKILL.md`) and replies with one line naming the language; a message follows when the note is written or has failed.
 
-The wrappers find the skill under `~/.hermes/skills/` (or `PODNOTE_SKILL_DIR`) and run it on the Python
-that has its requirements (`PODNOTE_PYTHON`, else the Docker image's `/opt/hermes/.venv`), because
-Hermes may start cron scripts on a managed environment of its own that lacks them. The notes folder
-must be mounted into the container if Hermes runs in Docker; an Obsidian vault kept in sync on your
-devices works well.
+**How the wrappers find things:**
 
-## Updating
+- **The skill** — under `~/.hermes/skills/`, or `PODNOTE_SKILL_DIR`.
+- **The Python** — `PODNOTE_PYTHON`, else the Docker image's `/opt/hermes/.venv`; Hermes may start cron scripts on its own managed environment, which lacks the skill's packages.
+- **The notes folder** — must be mounted into the container when Hermes runs in Docker.
+
+### Updating
 
 ```bash
 git pull
@@ -433,325 +380,75 @@ python3 scripts/setup_vad.py                  # only needed if a job reports the
 python3 -m pytest -q tests
 ```
 
-A GitHub PR merge updates the repository, **not** an already installed skill. When deploying a monitor change to an existing Hermes installation, copy its tested `scripts/podmonitor.py` and `tests/test_podmonitor.py` into the installed skill, then run that skill's full tests and verify that the actual cron wrapper points there and the installed monitor matches this checkout:
+- **Untouched by an update:** settings, `names.txt`, the queue, the show registry and the notes.
+- **From before the queue's store:** the first run moves the queue and requests into it one time and keeps the old files as `*.before-store`.
+- **Wrappers:** copy `hermes/` again when one changed.
+- **After upgrading Hermes:** run `scripts/check_hermes.py`.
+- **An installed skill** is not updated by a merged pull request. After copying a change into it, run its tests and confirm the cron runtime uses it:
 
-```bash
-python3 scripts/check_install.py --installed <installed-skill-dir> --wrapper <hermes-scripts-dir>/podcast-monitor.py
-```
+  ```bash
+  python3 scripts/check_install.py --installed <installed-skill-dir> --wrapper <hermes-scripts-dir>/podcast-monitor.py
+  ```
 
-A nonzero exit means the cron runtime is still running different code; do not declare the fix deployed. Changes to other skill scripts require their own parity and test checks. Settings, `names.txt`, the queue, the show registry and the notes are untouched by an update.
+  A nonzero exit means the cron runtime still runs different code. The check covers the monitor and the queue, registry and source modules it calls, and confirms by the wrapper's `--check` dry start that the wrapper is this checkout's and starts the installed monitor.
 
-## Usage
+### Your first note
 
-```bash
-scripts/podnote.py "<apple-podcasts-episode-url>"       # full run
-scripts/podnote.py --job-dir <dir> --force              # re-make the note from a saved transcript
-scripts/podnote.py --job-dir <dir> --force --model X    # same, on a different model
-scripts/podnote.py "<url>" --force --retranscribe       # transcribe again (earlier transcript set aside)
-```
+With the model server running and the settings filled in:
 
-**Name hints for the ASR model.** Every window is sent with a hint: show, hosts (show registry), the names
-in the episode title and description, and the cleaned description. Qwen3-ASR uses it as context, so
-"Siobhan", "Niamh" and "Maya" come out right instead of "Shivon", "Neeve" and "Maia". A window whose
-answer repeats the hint or is implausibly short for its length is transcribed again: with a shorter
-hint (description cut to 600 characters), then without one. Qwen3-ASR sometimes reads a hint back
-instead of the speech (seen in about 1 window in 7); which hint length does it differs from window to
-window, so no length is safe and the check is what matters. Each accepted window records `asr_hint`
-(`used`, `used (shorter hint)`, `dropped: <why>` or `none`). `--retranscribe` moves `asr/` and `podnote/` into
-`previous-<time>/` and runs ASR under a fresh state record, so an earlier transcript is never lost.
+1. **Make a note.**
 
-Every model output (part notes, themes, summary) is cached per job and per model under
-`<job>/podnote/<model>/`. A `--job-dir` rerun on the same model makes no model calls; delete a file
-there to redo that one call, or the directory to redo them all. `--model X` writes its own cache,
-so comparing models never mixes their output. The cache records what it was made from (`inputs.sha256`: the transcript and the
-prompts); after a new transcript or a prompt change it is set aside automatically, not reused.
+   ```bash
+   python3 scripts/podnote.py "https://podcasts.apple.com/us/podcast/<show>/id<id>?i=<episode-id>"
+   ```
 
-`STATUS: complete` means the note was written (or was already up to date). `STOPPED: <reason>` means
-no note was written: an unindexed episode, an unreachable model server, a model call that did not
-finish (`note incomplete: …`), a note that fails the check. Nothing partial is ever written, and the
-old note stays. There is no traceback and no retry; finished part notes stay on disk, so rerunning
-resumes from where it stopped. Exit code is 0 only for `STATUS: complete`.
+   Transcription runs at about seven times real time on the reference setup; writing the note takes a few minutes more. It ends with:
 
-## Queue, shows and validation
+   ```
+   NOTE: <PODNOTE_ROOT>/Podcasts/<Show>/<date> - <Episode>.md
+   STATUS: complete
+   ```
 
-podnote stays a single run. Three small programs around it, all run by Hermes cron jobs in script
-mode (no model, no cost), decide what it runs and check what it wrote:
+2. **Check it against outside sources.**
 
-| program | Hermes cron job | what it does |
-| --- | --- | --- |
-| `scripts/podqueue.py` | `podcast-queue`, every 5 min | runs podnote on the next queued link, then the validation pass; one episode per tick; a chat message per finished or failed episode, silence otherwise |
-| `scripts/podmonitor.py` | `podcast-monitor`, at :07 and :37 | checks the monitored shows for new episodes and queues them |
-| `scripts/podshows.py digest` | `podcast-shows-digest`, Mondays 07:15 | weekly summary of show registry changes (silent when none) |
-| `scripts/podverify.py` | (called by the queue) | validates names, works, quotes and key claims against external sources |
+   ```bash
+   python3 scripts/podverify.py "<the note path printed after NOTE:>"
+   ```
 
-Each cron job calls a small wrapper from `hermes/`, copied to `~/.hermes/scripts/` (Hermes only runs
-cron scripts from there); see "Running under Hermes".
+3. **Hands-off from a chat app:** follow [Running under Hermes](#running-under-hermes).
 
-**Queue.** `podqueue.py add <apple-episode-url>` appends a link (the Hermes agent does this when a
-link arrives in chat); `podqueue.py list` shows it. Files in `PODNOTE_STATE`: `queue.txt`
-(bare links, editable by hand), `queue-state.json` (retry bookkeeping), `done.txt`, `failed.txt`.
-An episode that could not be processed — not indexed by Apple yet, model server unreachable, ASR
-busy — is retried 1, 3, 6 and 12 hours after its first failure, then reported as failed. Another
-podnote run holding the lock is not a failure; the link just waits. An incomplete note is a failure
-(the old note stays), reported at once. A verification pass that fails (a source or the model was
-unavailable) is retried on its own, without remaking the note, on the same schedule
-(`verify-retry.json`); this sends no chat message and is logged in `done.txt` or `failed.txt`. A run that
-dies mid-way (a timeout or a crash) has the models it left loaded on the server unloaded.
+## What's new in 6.0
 
-**Cache.** Each episode's working folder (`PODNOTE_CACHE/jobs/podcast-<id>/`) keeps the transcript,
-the part notes and the processing records. The audio (the download and the cut windows) is deleted as
-soon as the transcript is complete; the folder itself goes once it has not been used (transcribed,
-written or verified) for `PODNOTE_KEEP_DAYS` days, 30 by default. The queue does this at most once a
-day (`cache-cleanup.log`); episodes in the queue are left alone, and the notes are never touched.
-Re-making a note from a kept transcript needs no download; after the folder has gone, the episode is
-downloaded and transcribed again.
+**Sources**
 
-**Ideas.** Part notes tag named theories, principles, laws, effects, paradoxes, fallacies, biases,
-thought experiments, models, ideologies and doctrines (`[idea]`). The validation pass keeps an idea when
-Wikipedia's top hit is that very idea (same title; its description or Wikidata type says theory,
-principle, ideology…), takes Wikipedia's spelling of the name and links the article; an entry filed
-as a work that Wikipedia describes as an idea ("Broken window theory") moves to Ideas instead of
-being removed. Without evidence an idea stays as it is.
+- **YouTube as a second source.** Any video link goes through the same queue, transcription and note. A podcast can have an Apple feed and a YouTube channel, each with a priority you set; an episode is made once, from the best source that has it.
+- **One episode, recognised across sources**, by title or, for shows that title their uploads differently, by release time and length.
+- **New Apple episodes found sooner:** Apple's catalogue is asked fresh each time, so a cached answer can no longer hide a release for a day.
+- **Audio not served yet** for an episode under a day old is tried again later instead of failing.
 
-**Show registry (`podshows.py`, `PODNOTE_STATE/shows.json`).** Every show ever processed, keyed by its
-Apple show id, with facts about the show only: folder name, publisher, feed, Wikidata item, monitor
-flag, hosts, show-scoped name fixes and advertisers. Episodes are not stored; they are the notes in the
-show's folder. Hosts maintain themselves from evidence, with no approvals:
+**Languages**
 
-- strong sources add a host at once: the user (locked, never changed automatically), the feed's
-  `podcast:person` host tags, Wikidata's presenter (looked up by Apple id), a full name in the show's
-  title ("Signals with Omar Haddad") and the feed author when it is a person;
-- episodes add the rest: whoever the notes list as host, or who introduces themselves at the start or
-  signs off at the end ("Hi, I'm…", "with me, Tomas Brandt", "Thanks for listening. I'm Iris
-  Fleming"), in 3 episodes;
-- a role follows the share of recent episodes (last 20, or 30 days if longer): about half or more is a
-  regular host, 10–50% a recurring co-host (a weekly guest presenter on a daily show);
-- a regular host missing from 8 recent episodes for 60 days, or a co-host missing for three of their
-  usual gaps (60 days at least), becomes former with an end date: nobody is deleted, and older
-  episodes keep their hosts;
-- a name corrected by the validation pass in 2 episodes of a show becomes that show's name fix;
-  advertisers named in show notes are kept per show for 90 days and named in the part-note prompt.
+- **Every episode in its own language**, from speech recognition to the note, its claims and its lookups. Which languages work depends on the speech and text models you run.
+- **Detected with care:** a clear case is queued, an unclear one is asked about first.
 
-Every change is logged (`shows-changes.log`) and summarised in a weekly chat digest, sent only when
-something changed. The user corrects through Hermes ("hosts of X are A, B", "C is not a host of X",
-"monitor X"). `Shows.md` in the podcasts notes folder is a generated, read-only overview.
+**People**
 
-**Monitoring.** Shows flagged `monitor` in the registry. For each: RSS feed → episodes not seen before → Apple catalogue (using the same lookup window as direct episode resolution). Match the RSS item to an Apple track by GUID, then exact enclosure URL, then corroborated title/date/duration with ambiguity rejection; an Apple GUID need not equal the RSS GUID. Unresolved episodes remain pending and are retried on every check. After 3 days the monitor notifies once without marking them seen; a catalogue error is not evidence of absence. A newly monitored show has its back catalogue marked as seen; episodes under 5 minutes (trailers) are skipped. State: `PODNOTE_STATE/monitor-state.json`.
+- **Several people on one installation:** members follow shows and queue episodes from their own chat, up to a daily limit; the admin is told and keeps control of shows and people.
+- **A cleaner message** for each finished note, formatted for both WhatsApp and Telegram, with a link back to the episode.
 
-**Validation pass (`podverify.py`).** One pass after every note; sources decide, the model only
-reads. One model session: an inventory call (work types, clean titles, up to six checkable claims
-with a search query each), a names-and-works verdict call and a claims verdict call, each shown only
-gathered evidence. Sources: the episode description, Wikipedia search and Wikidata "instance of"
-(what a thing is), books named first by a general web search (Brave Search:
-the model reads the results and gives the title and author as they spell them, so a misheard or only
-described book gets its real name), then Open Library (canonical record and a link to the work page on
-the latest English print edition; an Amazon UK book search when Open Library has no record), Wikipedia full-text
-search, OpenAlex (research papers and reports) and Brave Search (`PODNOTE_BRAVE_API_KEY`) for claims, and the
-transcript for quotes. Python guards every edit: a name only to a spelling variant, a title only to
-a variant of the same title, a work removed only when Wikidata/Wikipedia say the same title is not a
-work, or when the inventory reads it as not a work and no source says it is one; an author only
-when the entry itself names them and they are not part of the title. A claim gets a verdict
-(supported / disputed) only with cited evidence; a claim without one is left out of the note. A dispute must also
-survive a second, narrow question — the model copies the contradicting sentence, which must really
-be in the evidence — and evidence that names only other years than the episode's does not count
-against a claim that names none. Everything the model saw and decided is kept in the job folder as
-`verify-record.json`.
+**Reliability**
 
-Wikimedia rate-limits by User-Agent, one budget for Wikipedia, Wikidata and REST, reset at each
-clock minute: 10 requests/min without contact details, far more with them (the 2026 tiers say 200),
-so `AGENT` carries a contact address. A pass makes at most ~65 Wikimedia calls. Should a 429 come
-anyway, lookups wait as asked, and a host that keeps refusing is skipped for the rest of the pass
-(the log then says "Wikipedia did not answer"), so a throttled source never stalls the queue.
-Nothing is removed without evidence. Open Library allows 3 requests a second to clients that
-identify themselves, so its calls are spaced 0.35 s apart. Google Books is not used: since late
-September 2026 its field searches (`intitle:`, `inauthor:`, `isbn:`) return nothing, and its
-volumes do not tell print ISBNs from e-book ones.
+- **Crash-safe bookkeeping:** the queue, who asked for what and the messages still to send live in one small SQLite store; a message that fails to send is tried again.
+- **One set of monitoring rules** for every source, with nothing forgotten when a feed or listing moves on.
+- **Health at a glance:** `podstatus.py`, a one-off notice when a source cannot be read for two days, and `check_hermes.py` after a Hermes upgrade.
+- **Long episodes** carried across runs, and a speech-model echo of its own hint caught and redone.
+- **Safer installation checks:** cron wrappers with a dry start, and a check that the speech runtime matches the code.
 
-The note gets References grouped by type (Books as a table with Open Library links, Films & TV,
-Papers & reports, Laws, Other works, Ideas linked to Wikipedia, Quotes as callouts), a **Claims checked** table with source
-footnotes and a collapsed verification log. What the pass did is recorded in the job folder
-(`verify-record.json`), not in the note's properties. A note already verified (same fingerprint) is
-skipped; regenerate it with podnote to verify again. A claim's verdict reads "Supported by sources" or
-"Disputed": it says what the gathered evidence shows, not that the claim is true.
+## More
 
-Web search is one service, Brave Search (its own index; at most one request a second), used for
-claim evidence and for naming books: about 4 claim queries and 2–3 book queries per episode. One
-optional key, `PODNOTE_BRAVE_API_KEY`. Without it the validation pass still checks names, books and
-quotes against Wikipedia, Wikidata, Open Library and OpenAlex; claims get no web evidence and a misheard
-or only described book keeps the title as heard. The key has the skill's own name on purpose: Hermes
-never hands its own keys (`BRAVE_SEARCH_API_KEY` and the other credentials its tools use) to skill
-scripts, so a skill that calls the same service needs a key of its own. The same key value works; a
-separate key keeps the skill's usage apart.
+- **[Manual](docs/MANUAL.md):** commands, configuration, models, how each part works, data definitions, limitations and troubleshooting.
+- **Questions, problems, tested set-ups:** open a GitHub issue.
 
-## Where notes go and how they are checked
+## Licence
 
-Notes are Markdown files with YAML front matter (properties), written to `PODNOTE_ROOT`, in
-`PODNOTE_NOTES_DIR/<show>/`. Any local folder works. An Obsidian vault is a good choice: the notes, their
-properties and the generated `Podcasts.base` (a table of every episode) and `Shows.md` open there as
-they are. Elsewhere `Podcasts.base` is just an unused file.
-
-Every note is checked just before it is written. A note that fails is not written, and the reasons go to
-the job's `note-record.json`.
-
-- By default the skill's basic check (`scripts/notecheck.py`) runs. It checks that the properties are
-  readable, that `created` and `updated` are quoted UTC times, that `model` is named, that tags are
-  well spelt, and that the episode fields are present and of the right kind.
-- A notes folder with a metadata standard of its own is checked by that instead. Every part is optional,
-  relative to `PODNOTE_ROOT`:
-  - `_meta/tools/metadata_contract.py`: a validator with the same two functions as `notecheck.py`,
-    `parse_note(text)` and `validate_note(text, models, tags, profile=...)`, returning a list of
-    `{"code", "field"}` issues;
-  - `_meta/model-catalogue.json`: `{"verified_models": [...]}`; only these models may write notes;
-  - `_meta/tag-vocabulary.json`: `{"canonical_tags": [...], "proposed_aliases": {"AI": "ai"}}`; notes
-    get up to five subject tags from it (without it, no subject tags);
-  - `_meta/podcast-metadata-profile.json`: the episode fields to require, replacing the built-in list.
-
-The properties the skill writes:
-
-```yaml
-origin: agent
-model: gemma-4-26B-A4B-it-qat-4bit        # the model of the latest pass
-created: "2026-08-24T05:12:09"             # quoted UTC; set once, kept when the note is re-made
-updated: "2026-10-08T17:02:41"             # every change, including the validation pass
-tags: [science, history]                   # up to five subjects, only from the folder's tag list
-show / episode / published (UTC, only when it differs from created) / hosts / guests / publisher
-source_url / apple_episode_id / duration   # the podcast profile's fields; duration in seconds
-```
-
-- Re-making a note keeps `created` (and `published`, if the feed no longer gives it) from the
-  episode's existing note(s). A note whose creation time was never recorded gets the time of the re-make
-  (a job never fails over an unknown date).
-- Whole or nothing: if any part of the note fails (a section, the themes, the summary), the note is not
-  written and the old one stays; the queue reports a failure. A re-make that changes nothing is not
-  written either. Completion (skill version, note path, fingerprint) is recorded only after the write.
-- The verification pass fails openly (exit 1, `STOPPED:`) when it has no model, a model call fails, the
-  check rejects its result, or the note changed while it ran; it is then retried, never marked verified.
-- Unknown values are left out, never written empty.
-- One note per episode: every other copy of the episode (older titles, restored files) goes to
-  `<state>/superseded-notes/`; a different episode with the same file name gets its Apple id appended.
-- `Shows.md` is a script's note: `origin: agent`, `created`, `updated`, the tag `PODNOTE_SCRIPT_TAG` plus any
-  tags already on it, no `model`; a render that changes nothing leaves the file alone.
-- Tags: a short model call picks up to five subjects from the folder's tag list; subjects it lacks are kept as
-  suggestions in the job record, never written to the note.
-- Processing state stays outside the notes folder, in the episode's job folder: `note-record.json` (skill
-  version, the model that composed this version, status, problems, tags, suggestions) and
-  `verify-record.json` (verification time and counts, and the fingerprint of the note it verified).
-
-## names.txt
-
-Global rules, applied to every note. Text after ` #` is a comment:
-
-```
-Ada Lovelase => Ada Lovelace      # fix a misheard name, in every show
-!SomeSponsor                     # drop any bullet mentioning this
-```
-
-Bullets mentioning sponsors, adverts, promo or discount codes and URLs are dropped whether or not
-`names.txt` exists; a `!` rule is only needed for something that slips through. Hosts and fixes that
-belong to one show live in the show registry. An `@Show Name => First Host, Second Host` line still
-works where the registry knows no hosts, but the registry is the place for them.
-
-`names.txt` is gitignored — it is yours, not part of the project.
-
-
-## Queueing a show's episodes by title
-
-`podsearch.py "<show link>" "<words>" [--period "this year"] [--all] [--dry-run]` reads the show's RSS
-feed, matches episode titles against the words (case and punctuation ignored, whole words), filters by
-release date ("this year", "last 3 months", "2026-09", "since 2026-09-01", …) and queues the matches
-as ordinary Apple episode links. Up to 10 at once; more are listed and queued only with `--all`.
-
-## Apple, hosts, quotes and folders
-
-- Apple lookups ask the **US catalogue** first and the link's own storefront second: other storefronts lag
-  the US one by hours or days, which made new episodes look "not indexed".
-- The Participants line labels anyone the show registry knows as a host "host"; with exactly one host,
-  "the host" in the prose becomes that person's name. A self-introduction is no evidence of hosting.
-- Quotes keep only the words said: a close quote is replaced by the transcript's own words (repetitions
-  included); anything else is removed.
-- Show folders: the title before its first separator (":", " | ", or a spaced dash), at most 60 characters.
-
-## Limits worth knowing
-
-- No speaker diarization, so attribution in fast exchanges is a best guess (see "Who said what").
-- Names, titles and quotes come from ASR. The validation pass corrects what external sources
-  confirm; items without clear evidence stay as transcribed.
-- The finished note keeps about 80% of the subjects the part notes record; minor tangents drop out.
-- Occasional inverted claims (X opposing something they proposed) do occur with small models. The
-  note carries no timestamps; the part notes in the job directory show roughly where each point
-  came from. Treat the note as a reading aid, not a record.
-- Long episodes simply produce more parts. There is no overflow path and none is needed.
-- Part notes are a working artefact kept in the job directory, not part of the note.
-- The ASR model stays loaded between transcription windows; a finished synthesis session unloads
-  every model. If a run crashes between the two, the queue unloads what it left
-  (`model_arbiter.reconcile()`); a crashed run started by hand needs that call by hand.
-
-## Network and disk
-
-Per episode, roughly:
-
-| what | volume |
-| --- | --- |
-| Apple and the feed | 2–4 lookups and the RSS feed (cached per show); the audio once (50–150 MB, deleted after transcription) |
-| model server | one ASR call per window (about 15 minutes of audio each), then one call per transcript part (about 1,800 words), themes, summary and tags; then the validation pass: three calls, plus one per cited book and one per disputed claim |
-| Brave Search | about 4 queries for claims and 2–3 for books, at most one a second (optional) |
-| Wikipedia, Wikidata | at most about 65 calls per validation pass, one rate budget, with a contact address in the User-Agent |
-| Open Library, OpenAlex | a few calls per cited book or paper; Open Library spaced 0.35 s apart |
-| disk | while transcribing, the audio and its windows (a few hundred MB); afterwards about 0.5–1 MB of text per episode, kept `PODNOTE_KEEP_DAYS` days |
-
-Network addresses from feeds and redirects must be public: anything on the home network (loopback,
-private, link-local) is refused, so a feed cannot be used to reach other machines on it.
-
-## Troubleshooting
-
-| symptom | likely cause | what to do |
-| --- | --- | --- |
-| `STOPPED: … not indexed` | Apple has not listed the episode yet | nothing: the queue retries at 1, 3, 6 and 12 hours |
-| `STOPPED: model server unreachable …` | oMLX down or asleep, wrong `OMLX_BASE_URL` | start oMLX; the queue retries |
-| a model stays loaded after a crash | a run died between the ASR and text sessions | the queue unloads it; by hand: `model_arbiter.reconcile()` |
-| `VAD runtime readiness/hash validation failed` | an update changed the VAD script, model or policy | `python3 scripts/setup_vad.py` |
-| `Audio server returned HTTP 403` after a retry | the host's signed audio link expired | handled once automatically; if it persists the episode was withdrawn |
-| `STOPPED: note incomplete: …` | a model call was cut off or failed | run again: finished parts are cached; the old note stays meanwhile |
-| `STOPPED: note fails the metadata check: …` | the notes folder's standard rejects a property | see the listed codes; `notecheck.py` or your `_meta` validator |
-| a note was not verified | a source or the model was unavailable | retried automatically; by hand: `scripts/podverify.py "<note>"` |
-| an episode sits in the queue | a retry is pending, or another run holds the lock | `scripts/podqueue.py list` shows when it is due |
-| the cache grows | normal while transcribing | audio goes after each transcript; folders after `PODNOTE_KEEP_DAYS` |
-
-## Layout
-
-```
-scripts/podnote.py              the whole note pipeline (one episode, one run)
-scripts/podqueue.py             queue of episode links in front of podnote (Hermes cron)
-scripts/podmonitor.py           monitored shows -> new episodes -> queue (Hermes cron)
-scripts/podshows.py             show registry: hosts, publishers, fixes, advertisers; Shows.md overview
-scripts/podverify.py            external validation of names, works, quotes and claims
-scripts/note_prompts.py         the prompts podnote sends (part notes, themes, summary, tags)
-scripts/verify_prompts.py       the prompts the validation pass sends
-scripts/podsearch.py            queue a show's episodes whose titles match a phrase
-scripts/notecheck.py            the basic note check (when the notes folder has no standard of its own)
-scripts/podfetch.py             Apple Podcasts URL → RSS → audio URL
-scripts/audio_acquisition.py    bounded download with SSRF guards
-scripts/podcast_vad.py          Silero VAD CLI, runs in its own venv
-scripts/podcast_asr.py          windowing policy and ASR merge
-scripts/podcast_transcription.py  ASR orchestration, resumable per window
-scripts/podcast_state.py        SQLite kernel for ASR progress (+ migrations/)
-scripts/model_arbiter.py        exclusive model load; the text session unloads on every exit path
-scripts/omlx_client.py          model server config, auth and ASR health check
-scripts/omlx_text.py            model status and load/unload
-scripts/omlx_request.py         one ASR window -> /v1/audio/transcriptions (run as a subprocess)
-scripts/contracts.py            JSON schema validation for the ordered transcript
-scripts/settings.py             loads .env into the environment
-scripts/setup_vad.py            builds the speech-detection runtime and its readiness record
-hermes/                         the three Hermes cron wrappers (copy to ~/.hermes/scripts/)
-references/                     window and state policies, JSON schemas
-assets/silero-vad/              the bundled Silero VAD model (MIT)
-requirements*.txt               packages: scripts, speech-detection venv, tests
-tests/                          python3 -m pytest -q tests (invented data; no model server needed)
-.github/workflows/tests.yml     runs the tests on every push
-docs/images/                    the example note, rendered (light and dark)
-```
-
-## License
-
-MIT, Copyright (c) 2026 Alex Granford (https://github.com/alexgranford); see `LICENSE`. The bundled
-Silero VAD model is MIT-licensed by the Silero Team; see `assets/silero-vad/6.2.1/LICENSE`.
+MIT; see [`LICENSE`](LICENSE). The bundled Silero VAD model is MIT-licensed by the Silero Team.

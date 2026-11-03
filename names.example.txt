@@ -1,8 +1,15 @@
 # podnote name rules. One per line. Blank lines, lines starting with # and text after " #" are ignored.
 #
 #   wrong spelling => Right Spelling   fixes a recurring speech-recognition mishearing everywhere in a note
+#   Stem* => Right*                    fixes every word starting with Stem and keeps its ending (for
+#                                      languages whose names change ending: Stem, Stema, Stemu…)
+#   Stem* => Right                     replaces every word starting with Stem by Right
 #   !phrase                            drops any bullet containing the phrase (a sponsor that slips through)
 #   @show name fragment => hosts       names a show's regular hosts when the show registry knows none yet
+#
+# Any rule may start with language codes: "[de] Mueller => Müller", "[de, fr] …". It then applies only
+# to notes in one of those languages (the note's `language` property); a rule without codes applies to
+# every note. A name written in another script (a transliteration) needs a rule of its own.
 #
 # Copy this file to names.txt (which stays private) and add your own rules as you notice them.
 # Sponsors, URLs and self-promotion are dropped automatically; hosts are normally learned by the
@@ -12,6 +19,8 @@
 Ada Lovelase => Ada Lovelace
 Marie Cury => Marie Curie
 Carl Sagen => Carl Sagan
+# [de] Gote => Goethe                          # only in notes in German
+# [el] Σωκρατ* => Σωκράτ*                      # Σωκρατης, Σωκρατη… get the accent, keep the ending
 
 # --- drop lines --------------------------------------------------------------
 # !Example Mattress Company

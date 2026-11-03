@@ -6,7 +6,10 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import json
 import unittest
+import urllib.error
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -28,9 +31,6 @@ class UnitTests(unittest.TestCase):
             podfetch.parse_apple_url("http://podcasts.apple.com/podcast/x/id123?i=456")
 
 
-
-
-
     def test_exact_apple_episode_url_precedes_fuzzy_title(self):
         episodes = [
             podfetch.Episode(
@@ -47,8 +47,6 @@ class UnitTests(unittest.TestCase):
         )
         self.assertEqual(result.guid, "feed-guid")
         self.assertEqual(result.match_method, "apple_episode_url")
-
-
 
 
     def test_new_episode_retries_once_without_stale_conditional_feed_cache(self):
@@ -95,11 +93,43 @@ class UnitTests(unittest.TestCase):
         self.assertIs(result, refreshed)
         self.assertTrue(resolver.call_args.kwargs["force_feed_refresh"])
 
+    def test_an_episode_link_is_found_in_whichever_window_lists_it(self):
+        asked = []
 
+        def answer(url):
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            asked.append((params["country"][0], int(params["limit"][0])))
+            rows = [{"trackId": 456, "trackName": "Old one", "episodeUrl": "https://cdn.example/a.mp3"}] \
+                if params["limit"] == ["200"] else []                         # an old episode: the largest only
+            return 200, json.dumps({"results": rows}).encode(), {}
+        with mock.patch.object(podfetch, "http_get", side_effect=answer):
+            hint = podfetch.episode_hint_from_apple("123", "456", "gb")
+        self.assertEqual(("456", "Old one"), (hint.track_id, hint.title))
+        self.assertEqual([("us", 10), ("gb", 10), ("us", 100), ("gb", 100), ("us", 200)], asked)
 
+    def test_every_apple_lookup_is_asked_fresh(self):
+        asked = []
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+        def answer(url):
+            asked.append(urllib.parse.parse_qs(urllib.parse.urlparse(url).query))
+            return 200, b'{"results": []}', {}
+        with mock.patch.object(podfetch, "http_get", side_effect=answer), \
+                mock.patch.object(podfetch.time, "time", side_effect=[1000.0, 2000.0]):
+            podfetch.apple_lookup_rows("123", "us", 10)
+            podfetch.apple_lookup_rows("123", "us", 10)
+        self.assertEqual([["1000"], ["2000"]], [query["t"] for query in asked])   # never a CDN copy
+
+    def test_a_failed_apple_lookup_is_an_error_to_retry(self):
+        import sources
+        failure = urllib.error.HTTPError("https://itunes.apple.com/lookup", 503, "Service Unavailable", {}, None)
+        with mock.patch.object(podfetch, "http_get", side_effect=failure), \
+                self.assertRaises(podfetch.AppleLookupError) as raised:
+            podfetch.episode_hint_from_apple("123", "456")
+        self.assertTrue(sources.apple.lookup_error(raised.exception).retry)
+
+    def test_the_us_catalogue_is_asked_first(self):
+        self.assertEqual(["us", "gb"], podfetch.storefronts("gb"))
+        self.assertEqual(["us"], podfetch.storefronts("US"))
 
 
 class FeedGuardTests(unittest.TestCase):

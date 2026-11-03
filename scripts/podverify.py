@@ -43,14 +43,26 @@ sys.path.insert(0, str(HERE))
 
 import settings  # noqa: E402,F401  (importing it loads the project .env)
 import podnote  # noqa: E402
+import sources  # noqa: E402
+import languages  # noqa: E402
+import notes  # noqa: E402  (reading notes)
+import results  # noqa: E402  (the lines the queue reads)
+from web import AGENT, CONTACT, THROTTLED, http_json  # noqa: E402,F401  (the polite client)
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
+WIKI_LANGUAGES = ["en"]                 # the Wikipedias asked, in order: the note's language first (set per pass)
+WIKI_FOUND: dict[str, str] = {}         # page title -> the Wikipedia it came from, for its link and its Wikidata item
+
+
+def wiki_api(language: str) -> str:
+    return WIKI_API.replace("://en.", f"://{language}.", 1)
+
+
+def wiki_url(title: str) -> str:
+    return f"https://{WIKI_FOUND.get(title, 'en')}.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_"))
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 OPEN_LIBRARY = "https://openlibrary.org/search.json"
 OPENALEX = "https://api.openalex.org/works"
-# Wikimedia asks automated clients for contact details (and limits anonymous ones to 10 requests a minute)
-CONTACT = os.environ.get("PODNOTE_CONTACT", "").strip()
-AGENT = f"podnote-verify/1.0 ({CONTACT}) python-urllib/3" if CONTACT else "podnote-verify/1.0 python-urllib/3"
 MAX_NAMES, MAX_CLAIMS = 30, 6
 NOT_NAMES = {"the", "a", "an", "in", "on", "at", "of", "and", "but", "or", "if", "while", "as", "this", "that",
              "these", "those", "it", "its", "he", "she", "they", "we", "his", "her", "their", "our", "for", "with",
@@ -98,68 +110,30 @@ from verify_prompts import INVENTORY_PROMPT, NAMES_WORKS_PROMPT, CLAIMS_PROMPT, 
 
 # ---------------------------------------------------------------- sources
 
-THROTTLED: set[str] = set()                               # hosts that kept answering 429 in this pass
-
-
-def http_json(url: str, timeout: int = 15):
-    """GET JSON politely: a short pause per call to other hosts (a pass stays far below Wikimedia's
-    limit for a User-Agent with contact details); after a rate limit (Wikimedia answers 429 with
-    Retry-After) wait exactly as asked when it is a minute or less, otherwise skip that host for the pass;
-    after a network error 2 s; three tries. A lookup
-    that still fails raises, and callers treat it as no evidence. A host still rate-limiting after
-    three tries is skipped for the rest of the pass, so a throttled source cannot stall the queue."""
-    host = urllib.parse.urlsplit(url).netloc
-    if host in THROTTLED:
-        raise urllib.error.URLError(f"{host} is rate-limiting this pass")
-    request = urllib.request.Request(url, headers={"User-Agent": AGENT, "Accept": "application/json"})
-    for attempt in (1, 2, 3):
-        if host.endswith("openlibrary.org"):
-            time.sleep(0.35)                              # Open Library: 3 requests/s for identified clients
-        elif not host.endswith(("wikipedia.org", "wikidata.org")):
-            time.sleep(0.2)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return json.load(response)
-        except urllib.error.HTTPError as error:
-            if attempt == 3 and error.code in (429, 503):
-                THROTTLED.add(host)
-            if attempt == 3 or error.code not in (429, 503):
-                raise
-            wait = str((error.headers or {}).get("Retry-After", "5")).strip()
-            if wait.isdigit():
-                seconds = int(wait)
-            else:                                         # an HTTP date
-                try:
-                    from email.utils import parsedate_to_datetime
-                    seconds = max(0, int(parsedate_to_datetime(wait).timestamp() - time.time()))
-                except (TypeError, ValueError):
-                    seconds = 5
-            if seconds > 60:                              # longer than a pass can wait: never ask again early
-                THROTTLED.add(host)
-                raise
-            time.sleep(seconds)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-            if attempt == 3:
-                raise
-            time.sleep(2)
 
 
 def wikipedia(query: str, limit: int = 3) -> list[str]:
-    """'Title — short description' for the top Wikipedia search hits; [] on any failure."""
-    try:
-        data = http_json(WIKI_API + "?" + urllib.parse.urlencode({
-            "action": "query", "generator": "search", "gsrsearch": query, "gsrlimit": limit,
-            "prop": "description", "format": "json", "formatversion": 2}))
-    except Exception:
-        return []
-    pages = sorted(data.get("query", {}).get("pages", []), key=lambda page: page.get("index", 99))
-    return [f"{page['title']} — {page.get('description', '')}".strip(" —") for page in pages]
+    """'Title — short description' for the top Wikipedia search hits, from the first of WIKI_LANGUAGES
+    that has any; [] on any failure."""
+    for language in WIKI_LANGUAGES:
+        try:
+            data = http_json(wiki_api(language) + "?" + urllib.parse.urlencode({
+                "action": "query", "generator": "search", "gsrsearch": query, "gsrlimit": limit,
+                "prop": "description", "format": "json", "formatversion": 2}))
+        except Exception:
+            continue
+        pages = sorted(data.get("query", {}).get("pages", []), key=lambda page: page.get("index", 99))
+        if pages:
+            WIKI_FOUND.update({page["title"]: language for page in pages})
+            return [f"{page['title']} — {page.get('description', '')}".strip(" —") for page in pages]
+    return []
 
 
 def wikidata_types(title: str) -> list[str]:
-    """English labels of the Wikidata 'instance of' (P31) values for a Wikipedia page title."""
+    """English labels of the Wikidata 'instance of' (P31) values for a Wikipedia page title (of the
+    Wikipedia it was found in)."""
     try:
-        data = http_json(WIKI_API + "?" + urllib.parse.urlencode({
+        data = http_json(wiki_api(WIKI_FOUND.get(title, "en")) + "?" + urllib.parse.urlencode({
             "action": "query", "titles": title, "prop": "pageprops", "redirects": 1,
             "format": "json", "formatversion": 2}))
         item = (data.get("query", {}).get("pages", [{}])[0].get("pageprops") or {}).get("wikibase_item")
@@ -359,15 +333,20 @@ def latest_english_edition(work_key: str) -> str:
 
 
 def wikipedia_passages(query: str, limit: int = 3) -> list[dict]:
-    """Wikipedia full-text search: article titles with the matching passage."""
-    try:
-        data = http_json(WIKI_API + "?" + urllib.parse.urlencode({
-            "action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json"}))
-    except Exception:
-        return []
-    return [{"title": hit["title"], "snippet": re.sub(r"<[^>]+>", "", hit.get("snippet", "")),
-             "url": "https://en.wikipedia.org/wiki/" + urllib.parse.quote(hit["title"].replace(" ", "_"))}
-            for hit in data.get("query", {}).get("search", [])]
+    """Wikipedia full-text search: article titles with the matching passage, from the first of
+    WIKI_LANGUAGES that has any."""
+    for language in WIKI_LANGUAGES:
+        try:
+            data = http_json(wiki_api(language) + "?" + urllib.parse.urlencode({
+                "action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json"}))
+        except Exception:
+            continue
+        hits = data.get("query", {}).get("search", [])
+        if hits:
+            WIKI_FOUND.update({hit["title"]: language for hit in hits})
+            return [{"title": hit["title"], "snippet": re.sub(r"<[^>]+>", "", hit.get("snippet", "")), "url": wiki_url(hit["title"])}
+                    for hit in hits]
+    return []
 
 
 def studies(query: str, limit: int = 3) -> list[dict]:
@@ -537,7 +516,7 @@ def group_for(kind: str, types: list[str]) -> str:
 
 def front_people(front: str) -> tuple[str, list[str]]:
     """The show and the people taking part, from the note's properties."""
-    fields = podnote.read_front(front if front.startswith("---") else f"---\n{front.strip()}\n---\n")
+    fields = notes.read_front(front if front.startswith("---") else f"---\n{front.strip()}\n---\n")
     people = [str(n) for key in ("hosts", "guests") for n in (fields.get(key) or []) if isinstance(fields.get(key), list)]
     return str(fields.get("show") or ""), people
 
@@ -619,7 +598,7 @@ def idea_link(title: str, hits: list[str], types: list[str], tagged: bool = Fals
     called_an_idea = IDEA_EVIDENCE.search(description) or any(IDEA_EVIDENCE.search(t) for t in types)
     if not called_an_idea and not (tagged and not NOT_A_WORK.search(description) and not NOT_AN_IDEA.search(description)):
         return None
-    return name, "https://en.wikipedia.org/wiki/" + urllib.parse.quote(name.replace(" ", "_"))
+    return name, wiki_url(name)
 
 
 def work_title_author(entry: str) -> tuple[str, str, str]:
@@ -672,30 +651,6 @@ def description_evidence(name: str, description: str) -> list[str]:
 
 # ---------------------------------------------------------------- quotes (mechanical)
 
-STUTTER = re.compile(r"(?i)\b((?:[\w'’]+[ ,]+){1,4}?)\1")
-
-
-def destutter(tokens: list[str]) -> list[str]:
-    out: list[str] = []
-    for token in tokens:
-        out.append(token)
-        for size in (1, 2, 3):
-            if len(out) >= 2 * size and [w.lower() for w in out[-size:]] == [w.lower() for w in out[-2 * size:-size]]:
-                del out[-size:]
-                break
-    return out
-
-
-def destutter_quote(quote: str) -> str:
-    match = re.match(r'^([“"])(.+?)([”"])', quote)
-    if not match:
-        return quote
-    words, previous = match.group(2), None
-    while words != previous:
-        previous, words = words, STUTTER.sub(r"\1", words)
-    return match.group(1) + words + match.group(3) + quote[match.end():]
-
-
 def check_quote(quote: str, transcript: str) -> tuple[str, str | None]:
     """('keep'|'snap'|'remove', the transcript's words when snapping). A quote keeps only words that were
     said: a passage matching >= 0.8 of its words in order is replaced by the transcript's own words
@@ -725,17 +680,16 @@ def check_quote(quote: str, transcript: str) -> tuple[str, str | None]:
 
 
 def job_dir(note_text: str) -> Path | None:
-    match = re.search(r"^apple_episode_id: ['\"]?(\d+)", note_text, re.M)
-    root = podnote.CACHE / "jobs" / f"podcast-{match.group(1)}" if match else None
+    """The note's job folder (from its source id property: apple_episode_id, youtube_video_id), if it is there."""
+    root = sources.job_root(podnote.CACHE, note_text)
     return root if root is not None and root.is_dir() else None
 
 
 def job_files(note_text: str) -> tuple[str, str]:
     """(transcript text, cleaned episode description) from the note's job cache, '' when absent."""
-    match = re.search(r"^apple_episode_id: ['\"]?(\d+)", note_text, re.M)
-    if not match:
+    root = sources.job_root(podnote.CACHE, note_text)
+    if root is None:
         return "", ""
-    root = podnote.CACHE / "jobs" / f"podcast-{match.group(1)}"
     transcript = description = ""
     if (root / "asr/transcript-v1.json").is_file():
         chunks = json.loads((root / "asr/transcript-v1.json").read_text(encoding="utf-8"))["chunks"]
@@ -758,6 +712,7 @@ class Model:
     def __init__(self):
         self.session = self.config = None
         self.unreadable: list[str] = []                    # raw answers that did not parse, for the record
+        self.language = "English"                          # the note's language, stated in every prompt
 
     def __enter__(self):
         try:
@@ -778,12 +733,24 @@ class Model:
                 pass
         return False
 
+    def write_in(self) -> str:
+        """For a note not in English: the claims, who made them and the reasons the note shows are written
+        in its language (left unsaid, they came back in English: 8 of 9 claims over four such notes);
+        a search query may be in any language, and names and titles stay as the evidence spells them."""
+        if self.language == "English":
+            return ""
+        return (f" Write every claim, \"who\" and reason in {self.language}. A search query may be in whichever "
+                f"language finds sources best; names and titles stay as the evidence spells them.")
+
     def ask(self, prompt: str, limit: int = 2500) -> dict:
         if self.config is None:
             return {}
         try:
             import omlx_client
-            text, finish = podnote.ask(self.config["base_url"], omlx_client.headers(self.config), prompt, limit)
+            text, finish = podnote.ask(self.config["base_url"], omlx_client.headers(self.config),
+                                       f"Language: the podcast and its notes are in {self.language}.{self.write_in()}\n\n{prompt}",
+                                       limit, *([f"Write every text the note will show in {self.language}."]
+                                                if self.language != "English" else []))
         except Exception as error:                      # the model went away mid-pass: the pass fails
             raise VerifyError(f"verification model call failed: {error}") from error
         parsed = parse_answer(text) if finish == "stop" else {}
@@ -854,6 +821,10 @@ def verify(path: Path, model=None) -> tuple[int, int]:
     works_raw, ideas_raw, quotes_raw = reference_entries(body)
     changes: list[str] = []
     model = model or Model()
+    spoken = re.search(r"(?m)^language: ['\"]?(\w+)", text)
+    spoken = spoken.group(1) if spoken else languages.DEFAULT
+    WIKI_LANGUAGES[:] = list(dict.fromkeys([spoken, "en"]))   # the note's language first, then English
+    model.language = languages.name(spoken)
     with model:
         # A. inventory: work types, clean titles, claims worth checking
         listing = "\n".join(f"W{i}: {entry}" for i, entry in enumerate(works_raw, 1)) or "none"
@@ -867,7 +838,7 @@ def verify(path: Path, model=None) -> tuple[int, int]:
                  for i, name in enumerate(candidate_names(body), 1)}
         works = {}
         show_name, people = front_people(front)
-        publisher = str(podnote.read_front(text).get("publisher") or "")
+        publisher = str(notes.read_front(text).get("publisher") or "")
         for i, entry in enumerate(works_raw, 1):
             key = f"W{i}"
             title, author, context = work_title_author(entry)
@@ -1097,7 +1068,7 @@ def verify(path: Path, model=None) -> tuple[int, int]:
 
     disputed = sum(1 for row in rows if row[0] == "disputed")
     if front + body != text:                             # the note says when it changed; the check stays outside
-        front = re.sub(r'(?m)^updated: .*$', f'updated: "{podnote.utc_now()}"', front)
+        front = re.sub(r'(?m)^updated: .*$', f'updated: "{notes.utc_now()}"', front)
         issues = podnote.validate(front + body)
         if issues:
             raise VerifyError("verified note fails the metadata check: " + ", ".join(issues))
@@ -1105,7 +1076,7 @@ def verify(path: Path, model=None) -> tuple[int, int]:
             raise VerifyError("the note changed during verification; not written")
         podnote.atomic_write(path, front + body)
     if record is not None:
-        merge_record(record / "verify-record.json", verified_at=podnote.utc_now(), changes=len(changes),
+        merge_record(record / "verify-record.json", verified_at=notes.utc_now(), changes=len(changes),
                      claims_checked=len(rows), claims_disputed=disputed,
                      note_sha256=hashlib.sha256((front + body).encode()).hexdigest())
     return len(changes), len(rows)
@@ -1178,10 +1149,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("note")
     args = parser.parse_args()
+    import users
+    refused = users.admin_only("run the validation pass")
+    if refused:
+        results.emit("STOPPED", f"{refused}")
+        return 1
     try:
         changes, claims = verify(Path(args.note))
     except VerifyError as error:
-        print(f"STOPPED: {error}")
+        results.emit("STOPPED", f"{error}")
         return 1
     print("Verified: already verified, skipped" if changes < 0 else f"Verified: {changes} changes, {claims} claims")
     return 0

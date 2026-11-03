@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import notecheck
 import podnote
+import sources
 
 
 class NamesFileTestCase(unittest.TestCase):
@@ -35,10 +36,8 @@ class SectionsTests(unittest.TestCase):
     def transcript(self, text: str) -> dict:
         return {"chunks": [{"text": text}]}
 
-    def test_short_transcript_is_one_part(self):
+    def test_parts_break_at_sentences_within_the_word_limit(self):
         self.assertEqual(["One. Two three."], podnote.sections(self.transcript("One.   Two\nthree.")))
-
-    def test_parts_break_at_sentence_boundaries_within_the_word_limit(self):
         sentence = " ".join(["word"] * 99) + "."
         parts = podnote.sections(self.transcript(" ".join([sentence] * 40)))   # 4,000 words
         self.assertGreater(len(parts), 1)
@@ -48,36 +47,30 @@ class SectionsTests(unittest.TestCase):
         self.assertLessEqual(len(parts[-1].split()), podnote.SECTION_WORDS + podnote.SECTION_WORDS // 4)
         self.assertTrue(all(part.endswith(".") for part in parts))
 
-    def test_unpunctuated_run_is_cut_at_the_word_limit(self):
+    def test_an_unpunctuated_run_is_cut_at_the_limit_and_a_small_remainder_joins(self):
         parts = podnote.sections(self.transcript(" ".join(["word"] * (podnote.SECTION_WORDS * 2))))
         self.assertEqual([podnote.SECTION_WORDS, podnote.SECTION_WORDS], [len(p.split()) for p in parts])
-
-    def test_small_remainder_joins_the_last_part(self):
         words = podnote.SECTION_WORDS + podnote.SECTION_WORDS // 8
-        parts = podnote.sections(self.transcript(" ".join(["word"] * words)))
-        self.assertEqual([words], [len(p.split()) for p in parts])
+        self.assertEqual([words], [len(p.split()) for p in podnote.sections(self.transcript(" ".join(["word"] * words)))])
 
 
 class SplitReferencesTests(unittest.TestCase):
 
-    def test_references_label_on_its_own_line(self):
-        points, refs = podnote.split_references("**Topic:** x\n- a point\n**References:**\n- [work] A\n- [quote] \"b c d e\" — X")
-        self.assertEqual("**Topic:** x\n- a point", points)
-        self.assertEqual(["[work] A", "[quote] \"b c d e\" — X"], refs)
-
-    def test_first_entry_on_the_label_line_is_kept(self):
-        self.assertEqual(["[work] A", "[work] B"], podnote.split_references("- p\n**References:** [work] A\n- [work] B")[1])
-
-    def test_none_and_no_label(self):
-        self.assertEqual([], podnote.split_references("- p\n**References:**\n- none")[1])
-        self.assertEqual(("- p", []), podnote.split_references("- p"))
-
-    def test_a_point_that_starts_with_the_word_references_is_not_the_label(self):
-        notes = "- References to Orwell recur.\n**References:**\n- [work] 1984 (George Orwell) — cited"
-        points, refs = podnote.split_references(notes)
-        self.assertEqual("- References to Orwell recur.", points)
-        self.assertEqual(["[work] 1984 (George Orwell) — cited"], refs)
-
+    def test_references_are_split_from_the_points(self):
+        cases = [  # notes -> (points, references)
+            ("**Topic:** x\n- a point\n**References:**\n- [work] A\n- [quote] \"b c d e\" — X",
+             ("**Topic:** x\n- a point", ["[work] A", "[quote] \"b c d e\" — X"])),          # the label on its own line
+            ("- p\n**References:** [work] A\n- [work] B", ("- p", ["[work] A", "[work] B"])),   # a first entry on the label line
+            ("- A point.\n**References:** [work] Cosmos (documentary) — on stars\n",
+             ("- A point.", ["[work] Cosmos (documentary) — on stars"])),
+            ("- p\n**References:**\n- none", ("- p", [])),
+            ("- A point.\n**References:**\n- None.\n", ("- A point.", [])),
+            ("- p", ("- p", [])),                                                              # no label at all
+            ("- References to Orwell recur.\n**References:**\n- [work] 1984 (George Orwell) — cited",   # the word, not the label
+             ("- References to Orwell recur.", ["[work] 1984 (George Orwell) — cited"])),
+        ]
+        for notes, expected in cases:
+            self.assertEqual(expected, podnote.split_references(notes), notes)
 
 
 class ReferencesSectionTests(unittest.TestCase):
@@ -166,51 +159,51 @@ class CleanDescriptionTests(unittest.TestCase):
 
 class NamesRulesTests(NamesFileTestCase):
 
-    def test_replacement_is_case_insensitive_and_whole_word(self):
-        self.use_names("Ada Lovelase => Ada Lovelace\n")
-        self.assertEqual("Ada Lovelace spoke. ada lovelases.\n",
-                         podnote.apply_names("ada lovelase spoke. ada lovelases."))
+    def test_replacements_are_case_insensitive_whole_words_and_comments_are_no_rules(self):
+        self.use_names("Ada Lovelase => Ada Lovelace   # ASR mishearing\n# Old => New\n@Show => Old\n")
+        self.assertEqual("Ada Lovelace spoke. ada lovelases.\n", podnote.apply_names("ada lovelase spoke. ada lovelases."))
+        self.assertEqual("Old name\n", podnote.apply_names("Old name"))        # a comment and a host line replace nothing
 
-    def test_drop_rule_and_builtin_drops_remove_bullets_only(self):
-        self.use_names("!Acme\n")
-        text = "- Acme sponsored this\n- a promo code here\n- real point\nAcme in prose stays"
-        self.assertEqual("- real point\nAcme in prose stays\n", podnote.apply_names(text))
-
-    def test_comment_and_host_lines_are_not_replacements(self):
-        self.use_names("# Old => New\n@Show => Old\n")
-        self.assertEqual("Old name\n", podnote.apply_names("Old name"))
-
-    def test_builtin_drops_apply_without_a_names_file(self):
+    def test_drop_rules_and_builtin_drops_remove_bullets_only(self):
+        self.use_names("!Acme   # sponsor\n")
+        self.assertEqual("- real point\nAcme in prose stays\n",
+                         podnote.apply_names("- Acme sponsored this\n- a promo code here\n- real point\nAcme in prose stays"))
         with mock.patch.object(podnote, "NAMES_FILE", Path("/nonexistent/names.txt")):
             self.assertEqual("- Acme said this\n- Acme bans advertising to children\n",   # promotion goes, the subject stays
                              podnote.apply_names("- Sponsored by Acme\n- Acme said this\n- Acme bans advertising to children"))
             self.assertIn("never guess a surname", podnote.hosts_for("Any Show"))
 
-    def test_hosts_match_a_show_fragment(self):
-        self.use_names("@Starlight => Maya Lindqvist, Daniel Okafor\n")
+    def test_hosts_from_a_names_rule_else_the_feed(self):
+        self.use_names("@Starlight => Maya Lindqvist, Daniel Okafor  # hosts\n")
         self.assertEqual("Maya Lindqvist, Daniel Okafor", podnote.hosts_for("Starlight: Two Astronomers on the News"))
         self.assertIn("never guess a surname", podnote.hosts_for("Other Show"))
-        # no names.txt rule: the feed's host tags, else its author when that is a person
-        brief = {"show_author": "Nadia Whitcombe", "show_owner": "Nadia Whitcombe"}
-        self.assertEqual("Nadia Whitcombe", podnote.hosts_for("The Tech Morning Brief", brief))
         tagged = {"show_author": "Acme Media Ltd", "show_people": [{"name": "Ann Host", "role": "host"},
                                                                   {"name": "Gus Guest", "role": "guest"}]}
-        self.assertEqual("Ann Host", podnote.hosts_for("Some Show", tagged))
-        self.assertIn("never guess", podnote.hosts_for("The Daily Courier", {"show_author": "The Weekly Times"}))
-        self.assertIn("never guess", podnote.hosts_for("Paradoxica", {"show_author": "Paradoxica"}))
-        self.assertIn("never guess", podnote.hosts_for("Conversations", {"show_author": "The Open Press"}))
-        self.assertIn("never guess", podnote.hosts_for("Quiet Hours", {"show_author": "The Weekly Times", "show_owner": "Lena Wells"}))
-        self.assertEqual("Martin Grey", podnote.hosts_for("Outliers | Martin Grey", {"show_author": "Martin Grey"}))
-        self.assertEqual("Omar Haddad", podnote.hosts_for("Signals with Omar Haddad", {"show_author": "Signal Media"}))
-        self.assertEqual("Maya Lindqvist, Daniel Okafor", podnote.hosts_for("Starlight: Two Astronomers on the News", tagged))
+        cases = [  # (show, feed facts) -> hosts, or None for "not known"
+            ("The Tech Morning Brief", {"show_author": "Nadia Whitcombe", "show_owner": "Nadia Whitcombe"}, "Nadia Whitcombe"),
+            ("Some Show", tagged, "Ann Host"),
+            ("The Daily Courier", {"show_author": "The Weekly Times"}, None),
+            ("Paradoxica", {"show_author": "Paradoxica"}, None),
+            ("Conversations", {"show_author": "The Open Press"}, None),
+            ("Quiet Hours", {"show_author": "The Weekly Times", "show_owner": "Lena Wells"}, None),
+            ("Outliers | Martin Grey", {"show_author": "Martin Grey"}, "Martin Grey"),
+            ("Signals with Omar Haddad", {"show_author": "Signal Media"}, "Omar Haddad"),
+            ("Starlight: Two Astronomers on the News", tagged, "Maya Lindqvist, Daniel Okafor"),   # the rule wins
+        ]
+        for show, facts, hosts in cases:
+            found = podnote.hosts_for(show, facts)
+            self.assertIn("never guess", found, show) if hosts is None else self.assertEqual(hosts, found, show)
 
-    def test_inline_comments_are_ignored(self):
-        # README documents "Ada Lovelase => Ada Lovelace      # fix a recurring ASR mishearing"
-        self.use_names("Ada Lovelase => Ada Lovelace   # ASR mishearing\n"
-                       "!Acme   # sponsor\n"
-                       "@Starlight => Maya Lindqvist, Daniel Okafor  # hosts\n")
-        self.assertEqual("Ada Lovelace spoke.\n- kept\n", podnote.apply_names("Ada Lovelase spoke.\n- Acme ad\n- kept"))
-        self.assertEqual("Maya Lindqvist, Daniel Okafor", podnote.hosts_for("Starlight"))
+    def test_language_tags_and_prefix_rules(self):
+        self.use_names("Ada Lovelase => Ada Lovelace\n[de] Gote => Goethe\n[el, de] Σωκρατ* => Σωκράτ*\n"
+                       "Lovelac* => Lovelace\n[de] !Werbung für\n")
+        self.assertEqual("Gote met Ada Lovelace.\n", podnote.apply_names("Gote met Ada Lovelase.", language="en"))
+        self.assertEqual("Goethe met Ada Lovelace.\n", podnote.apply_names("Gote met Ada Lovelase.", language="de"))
+        self.assertEqual("Ο Σωκράτης και του Σωκράτη.\n", podnote.apply_names("Ο Σωκρατης και του Σωκρατη.", language="el"))
+        self.assertEqual("Lovelace, Lovelace.\n", podnote.apply_names("Lovelaces, Lovelacey.", language="en"))
+        self.assertEqual("- kept\n", podnote.apply_names("- Werbung für Acme\n- kept", language="de"))
+        self.assertEqual("- Werbung für Acme\n- kept\n", podnote.apply_names("- Werbung für Acme\n- kept", language="en"))
+        self.assertIn("Gote => Goethe", podnote.name_rules())                     # no language: every rule
 
 
 class FakeModel:
@@ -229,7 +222,7 @@ class FakeModel:
         }
         self.answers.update(overrides)
 
-    def __call__(self, base_url, headers, prompt, max_tokens):
+    def __call__(self, base_url, headers, prompt, max_tokens, system=""):
         kind = ("section" if prompt.startswith("You are taking reading notes") else
                 "themes" if prompt.startswith("Below are sequential reading notes") else
                 "tags" if prompt.startswith("Choose the subject tags") else "summary")
@@ -520,14 +513,9 @@ class AskTests(unittest.TestCase):
 
 class StampAndPathTests(unittest.TestCase):
 
-    def test_listening_time(self):
-        self.assertEqual("", podnote.listening_time(0))
-        self.assertEqual("29 min", podnote.listening_time(29 * 60 + 10))
-        self.assertEqual("1h 17m", podnote.listening_time(77 * 60))
-
-    def test_stamp(self):
-        self.assertEqual("0:00:00", podnote.stamp(0))
-        self.assertEqual("1:02:03", podnote.stamp(3723.9))
+    def test_times_in_plain_form(self):
+        self.assertEqual(["", "29 min", "1h 17m"], [podnote.listening_time(t) for t in (0, 29 * 60 + 10, 77 * 60)])
+        self.assertEqual(["0:00:00", "1:02:03"], [podnote.stamp(t) for t in (0, 3723.9)])
 
     def test_note_path_is_dated_and_safe(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -539,10 +527,6 @@ class StampAndPathTests(unittest.TestCase):
                     mock.patch.object(podnote, "EPISODES", Path("Episodes")):
                 # the show's own folder (title cut at ": " when the registry does not know it), date and title
                 self.assertEqual(Path("/notes/Episodes/Show/2026-10-07 - AB test 1.md"), podnote.note_path(root))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RegistryRoleTests(unittest.TestCase):
@@ -588,18 +572,34 @@ class AudioLifecycleTests(unittest.TestCase):
                 raise audio_acquisition.AudioError("Audio server returned HTTP 403")
         fresh = SimpleNamespace(enclosure_url="https://cdn.example/new.mp3?sig=fresh")
         with mock.patch.object(audio_acquisition, "acquire_audio", acquire), \
-                mock.patch("podfetch.refresh_enclosure_if_needed", return_value=fresh), mock.patch.object(podnote, "log"):
-            podnote.fetch_audio("https://podcasts.apple.com/us/podcast/id1?i=2", metadata, metadata_path,
-                                self.root / "source" / "episode-audio")
+                mock.patch("podfetch.refresh_enclosure_if_needed", return_value=fresh):
+            sources.apple.fetch_audio(sources.parse("https://podcasts.apple.com/us/podcast/id1?i=2"), metadata, metadata_path,
+                                      self.root / "source" / "episode-audio", lambda message: None, self.root / "resolver")
         self.assertEqual(["https://cdn.example/old.mp3?sig=expired", "https://cdn.example/new.mp3?sig=fresh"], tried)
         self.assertIn("sig=fresh", metadata_path.read_text())
+
+    def test_audio_missing_just_after_release_is_tried_again_later(self):
+        import audio_acquisition
+        from datetime import datetime, timedelta, timezone
+        gone = audio_acquisition.AudioError("Audio server returned HTTP 404")
+        for hours, retried in ((0.2, True), (30, False)):                       # minutes old; a day and more
+            released = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+            with mock.patch.object(audio_acquisition, "acquire_audio", side_effect=gone), \
+                    mock.patch("podfetch.refresh_enclosure_if_needed", return_value=None), \
+                    self.assertRaises((sources.SourceError, audio_acquisition.AudioError)) as raised:
+                sources.apple.fetch_audio(sources.parse("https://podcasts.apple.com/us/podcast/id1?i=2"),
+                                          {"audio_url": "https://cdn.example/a.mp3", "published_utc": released},
+                                          self.root / "m.json", self.root / "a", lambda message: None, self.root / "resolver")
+            self.assertEqual(retried, isinstance(raised.exception, sources.SourceError) and raised.exception.retry, hours)
 
     def test_other_download_errors_are_not_retried(self):
         import audio_acquisition
         with mock.patch.object(audio_acquisition, "acquire_audio",
                                side_effect=audio_acquisition.AudioTransientError("Audio server returned HTTP 503")), \
                 mock.patch("podfetch.refresh_enclosure_if_needed") as refresh, self.assertRaises(audio_acquisition.AudioError):
-            podnote.fetch_audio("u", {"audio_url": "https://cdn.example/a.mp3"}, self.root / "m.json", self.root / "a")
+            sources.apple.fetch_audio(sources.parse("https://podcasts.apple.com/us/podcast/id1?i=2"),
+                                      {"audio_url": "https://cdn.example/a.mp3"}, self.root / "m.json", self.root / "a",
+                                      lambda message: None, self.root / "resolver")
         refresh.assert_not_called()
 
 
@@ -614,11 +614,6 @@ class ModelOutputDriftTests(unittest.TestCase):
                 points, entries = podnote.split_references(notes)
                 self.assertEqual(expected, entries, (label, bullet))
                 self.assertNotIn("Cosmos", points)
-
-    def test_an_inline_first_entry_and_none_are_handled(self):
-        _, entries = podnote.split_references("- A point.\n**References:** [work] Cosmos (documentary) — on stars\n")
-        self.assertEqual(["[work] Cosmos (documentary) — on stars"], entries)
-        self.assertEqual([], podnote.split_references("- A point.\n**References:**\n- None.\n")[1])
 
     def test_works_from_adverts_are_left_out(self):
         section = podnote.references_section([
@@ -637,3 +632,17 @@ class ModelOutputDriftTests(unittest.TestCase):
         self.assertIn("Cosmos", section)
         self.assertIn("Occam's razor", section)
         self.assertNotIn("untagged", section)
+
+
+class PromoLineTests(unittest.TestCase):
+
+    def test_a_sponsor_line_is_recognised_in_every_language_listed(self):
+        lines = {"de": "Mit dem Gutschein HAFEN gibt es zehn Prozent Rabatt", "nl": "Gebruik de kortingscode HAVEN",
+                 "pl": "Wesprzyj nas na Patronite", "uk": "Підтримайте нас: промокод ГАВАНЬ",
+                 "fr": "Soutenez-nous avec le code promo PORT", "es": "Apóyanos con una donación",
+                 "it": "Usa il codice sconto PORTO", "pt": "Apoie o programa com o cupom PORTO"}
+        self.assertLessEqual(set(lines), set(podnote.PROMO_WORDS))
+        for code, line in lines.items():
+            with self.subTest(code):
+                self.assertTrue(podnote.PROMO.search(line), line)
+        self.assertFalse(podnote.PROMO.search("Ein Gespräch über Ebbe und Flut im Hafen"))

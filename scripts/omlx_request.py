@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import requests
@@ -14,22 +13,7 @@ import requests
 import omlx_client
 
 
-def atomic_json(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
+from files import atomic_json  # noqa: E402,F401  (the one atomic writer)
 
 
 def main() -> int:
@@ -40,6 +24,7 @@ def main() -> int:
     parser.add_argument("--base-url")
     parser.add_argument("--model")
     parser.add_argument("--prompt", help="context for the ASR model (names, topic); Qwen3-ASR biases spellings with it")
+    parser.add_argument("--language", help="the spoken language by its English name; told the wrong one, Qwen3-ASR translates")
     args = parser.parse_args()
     settings = omlx_client.config(args.base_url, args.model)
     audio = Path(args.audio)
@@ -50,7 +35,8 @@ def main() -> int:
                 headers=omlx_client.headers(settings),
                 files={"file": (audio.name, stream, "application/octet-stream")},
                 data={"model": settings["model"], "response_format": "verbose_json",
-                      **({"prompt": args.prompt} if args.prompt else {})},
+                      **({"prompt": args.prompt} if args.prompt else {}),
+                      **({"language": args.language} if args.language else {})},
                 timeout=(15, 21600),
             )
         try:

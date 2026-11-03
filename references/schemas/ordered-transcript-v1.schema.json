@@ -7,7 +7,7 @@
   "required": ["schema_version", "job_id", "status", "source", "model", "language", "duration_seconds", "audio_sha256", "chunks"],
   "properties": {
     "schema_version": {"const": 1},
-    "job_id": {"type": "string", "pattern": "^podcast-[A-Za-z0-9._-]+$"},
+    "job_id": {"type": "string", "pattern": "^(podcast|youtube)-[A-Za-z0-9._-]+$"},
     "status": {"const": "complete"},
     "source": {"enum": ["publisher", "apple_ttml", "omlx_asr", "fixture"]},
     "model": {"type": ["string", "null"]},

@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +35,24 @@ RequestRunner = Callable[[Path, Path, str, str | None], dict[str, Any]]
 VADRunner = Callable[[Path, Path, Path, Path], dict[str, Any]]
 
 
+def runtime_problem(runtime_root: str | Path = DEFAULT_RUNTIME, vad_model: str | Path = DEFAULT_VAD_MODEL,
+                    window_policy: str | Path = DEFAULT_WINDOW_POLICY) -> str:
+    """'' when the speech-detection runtime's readiness record matches the files it pins (the model, the VAD
+    command line, the window policy, the installed requirements); else why not. A deploy that changes one
+    of them must rebuild the record (scripts/setup_vad.py) before the next episode."""
+    runtime_root = Path(runtime_root)
+    ready_path = runtime_root / "READY.json"
+    if not ready_path.is_file():
+        return f"VAD runtime readiness record is absent: {ready_path}"
+    ready = json.loads(ready_path.read_text(encoding="utf-8"))
+    checks = {"model_sha256": file_sha256(vad_model), "cli_sha256": file_sha256(DEFAULT_VAD_CLI),
+              "policy_sha256": file_sha256(window_policy),
+              "requirements_lock_sha256": file_sha256(runtime_root / "requirements.lock")}
+    if ready.get("status") != "ready" or any(ready.get(key) != value for key, value in checks.items()):
+        return "VAD runtime readiness/hash validation failed"
+    return ""
+
+
 class TranscriptionError(RuntimeError):
     pass
 
@@ -48,23 +65,7 @@ class WindowRequestError(TranscriptionError):
         self.retryable = retryable
 
 
-def atomic_json(path: str | Path, value: dict[str, Any]) -> None:
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
+from files import atomic_json  # noqa: E402,F401  (the one atomic writer)
 
 
 def artifact_descriptor(job_id: str, artifact_id: str, artifact_type: str,
@@ -98,7 +99,7 @@ def default_vad_runner(audio: Path, model: Path, policy: Path, output: Path,
 
 
 def default_request_runner(window_audio: Path, raw_output: Path, model: str,
-                           base_url: str | None, prompt: str | None = None) -> dict[str, Any]:
+                           base_url: str | None, prompt: str | None = None, language: str | None = None) -> dict[str, Any]:
     error_output = raw_output.with_suffix(".error.json")
     script = ROOT / "scripts" / "omlx_request.py"
     command = [
@@ -109,6 +110,8 @@ def default_request_runner(window_audio: Path, raw_output: Path, model: str,
         command.extend(["--base-url", base_url])
     if prompt:
         command.extend(["--prompt", prompt])
+    if language:
+        command.extend(["--language", language])
     result = subprocess.run(command, capture_output=True, text=True, timeout=22000, check=False)
     if result.returncode or not raw_output.is_file():
         detail: Any = None
@@ -126,11 +129,21 @@ def default_request_runner(window_audio: Path, raw_output: Path, model: str,
     return json.loads(raw_output.read_text(encoding="utf-8"))
 
 
+HINT_HEAD = 8                          # words of the hint's own frame ("Podcast: X. Hosts: Y. Names: …")
+
+
 def hint_failure(raw: dict[str, Any], window: dict[str, Any], hint: str) -> str:
     """Why a window transcribed with a name hint cannot be kept ("" when it can). Qwen3-ASR can
     answer a hint with the hint itself and drop the speech (a 14-minute window came back as 14
-    words); the coverage check does not see it, because the single segment still spans the window."""
+    words); the coverage check does not see it, because the single segment still spans the window.
+    More often it reads the hint out first and then the speech: 96 of 823 windows over 73 of 236
+    episodes began with a 9-305 word echo, too small a share for the overlap rule. The hint's frame
+    (its first words: "Podcast: <show>. Hosts: …") is never spoken, so it alone marks the echo."""
     text = str(raw.get("text") or "") or " ".join(str(s.get("text") or "") for s in raw.get("segments") or [])
+    head = re.findall(r"\w+", hint.lower())[:HINT_HEAD]
+    tokens = re.findall(r"\w+", text.lower())
+    if len(head) == HINT_HEAD and any(tokens[i:i + HINT_HEAD] == head for i in range(len(tokens) - HINT_HEAD + 1)):
+        return "the transcript reads the hint out"
     words = text.split()
     minutes = window["duration_ms"] / 60000
     if minutes >= 1 and len(words) < 40 * minutes:
@@ -149,7 +162,7 @@ class TranscriptionRunner:
                  asr_model: str = DEFAULT_ASR_MODEL, omlx_base_url: str | None = None,
                  model_arbiter_root: str | Path = DEFAULT_MODEL_ARBITER_STATE,
                  vad_runner: VADRunner | None = None, request_runner: RequestRunner | None = None,
-                 asr_prompt: str | list[str] = ""):
+                 asr_prompt: str | list[str] = "", language: str = "", language_name: str = ""):
         self.store = store
         self.job_id = job_id
         self.audio_path = Path(audio_path)
@@ -170,6 +183,10 @@ class TranscriptionRunner:
         # then shorter ones, then none
         prompts = [asr_prompt] if isinstance(asr_prompt, str) else list(asr_prompt)
         self.asr_prompts = [p.strip() for p in prompts if p and p.strip()]
+        # the episode's language (code), and the name the speech model is told ("English"; "" = not told):
+        # told nothing it guesses, told the wrong one it translates
+        self.language = language
+        self.asr_language = {"language": language_name} if language_name else {}
 
     def _registered(self, artifact_id: str) -> dict[str, Any] | None:
         full_id = f"{self.job_id}:{artifact_id}"
@@ -187,18 +204,10 @@ class TranscriptionRunner:
         return f"asr-{payload_hash(self.job_id)}-window-{sequence:04d}"
 
     def validate_runtime(self) -> dict[str, Any]:
-        ready_path = self.runtime_root / "READY.json"
-        if not ready_path.is_file():
-            raise TranscriptionError(f"VAD runtime readiness record is absent: {ready_path}")
-        ready = json.loads(ready_path.read_text(encoding="utf-8"))
-        checks = {
-            "model_sha256": file_sha256(self.vad_model_path),
-            "cli_sha256": file_sha256(DEFAULT_VAD_CLI),
-            "policy_sha256": file_sha256(self.window_policy_path),
-            "requirements_lock_sha256": file_sha256(self.runtime_root / "requirements.lock"),
-        }
-        if ready.get("status") != "ready" or any(ready.get(key) != value for key, value in checks.items()):
-            raise TranscriptionError("VAD runtime readiness/hash validation failed")
+        problem = runtime_problem(self.runtime_root, self.vad_model_path, self.window_policy_path)
+        if problem:
+            raise TranscriptionError(problem)
+        ready = json.loads((self.runtime_root / "READY.json").read_text(encoding="utf-8"))
         if not (self.runtime_root / "venv" / "bin" / "python").is_file():
             raise TranscriptionError("VAD runtime interpreter is absent")
         return ready
@@ -423,13 +432,13 @@ class TranscriptionRunner:
         Returns (raw response, hint status)."""
         problems = []
         for index, prompt in enumerate(self.asr_prompts):
-            raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, prompt=prompt)
+            raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, prompt=prompt, **self.asr_language)
             problem = hint_failure(raw, window, prompt)
             if not problem:
                 return raw, "used" if index == 0 else "used (shorter hint)"
             problems.append(problem)
             raw_path.unlink(missing_ok=True)
-        raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url)
+        raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, **self.asr_language)
         return raw, f"dropped: {'; '.join(problems)}" if problems else "none"
 
     def transcribe_next(self) -> dict[str, Any]:
@@ -565,7 +574,7 @@ class TranscriptionRunner:
                 "status": "complete",
                 "source": "omlx_asr",
                 "model": self.asr_model,
-                "language": languages[0] if languages and all(item == languages[0] for item in languages) else "en",
+                "language": self.language or (languages[0] if languages and all(item == languages[0] for item in languages) else "en"),
                 "duration_seconds": int(round(source["source_duration_ms"] / 1000)),
                 "audio_sha256": source["source_sha256"],
                 "chunks": [

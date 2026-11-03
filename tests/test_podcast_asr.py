@@ -20,7 +20,6 @@ sys.path.insert(0, str(SCRIPTS))
 from podcast_asr import (  # noqa: E402
     ASRWindowError,
     TemporalCoverageError,
-    VADBoundaryUnavailable,
     WindowPolicy,
     materialize_windows,
     plan_vad_windows,
@@ -55,7 +54,6 @@ class PolicyTests(unittest.TestCase):
         WindowPolicy.load()
 
 
-
 class WindowPlannerTests(unittest.TestCase):
 
     def test_windows_cut_at_guarded_silence_and_exactly_partition_source(self) -> None:
@@ -82,8 +80,6 @@ class WindowPlannerTests(unittest.TestCase):
         windows = plan_vad_windows(3000, [(0, 3000)], fixture_policy())
         self.assertEqual(3000, windows[-1]["end_ms"])
         self.assertTrue(all(w["end_boundary"] is None or w["end_boundary"]["quality"] == "forced" for w in windows))
-
-
 
 
 class MaterializationTests(unittest.TestCase):
@@ -135,14 +131,6 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual(2.0, result["provider_duration_evidence"])
         self.assertEqual(1.0, result["speech_coverage_ratio"])
-
-
-
-
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class LastResortCutTests(unittest.TestCase):

@@ -6,7 +6,6 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -21,17 +20,7 @@ def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def atomic_json(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, indent=2, ensure_ascii=False); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except Exception:
-        try: os.unlink(temporary)
-        except FileNotFoundError: pass
-        raise
+from files import atomic_json  # noqa: E402,F401  (the one atomic writer)
 
 
 def lease_path(state_root: str | Path = DEFAULT_STATE) -> Path:

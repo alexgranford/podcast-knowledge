@@ -128,10 +128,6 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual("", podshows.digest())                               # nothing new since
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NamingTests(unittest.TestCase):
 
     def test_folder_names_stop_at_the_first_separator(self):
@@ -139,8 +135,3 @@ class NamingTests(unittest.TestCase):
             "Harbour Live - Tide tables, shipping forecasts (sea areas), lighthouses"))
         self.assertEqual("Make-Do", podshows.folder_name("Make-Do"))
         self.assertLessEqual(len(podshows.folder_name("word " * 30)), 60)
-
-    def test_the_us_catalogue_is_asked_first(self):
-        import podfetch
-        self.assertEqual(["us", "gb"], podfetch.storefronts("gb"))
-        self.assertEqual(["us"], podfetch.storefronts("US"))
