@@ -7,10 +7,9 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    env:
-      PODNOTE_VAD_RUNTIME: ${{ runner.temp }}/vad-runtime   # built below, so the transcription tests run too
     steps:
       - uses: actions/checkout@v4
+      - run: echo "PODNOTE_VAD_RUNTIME=$RUNNER_TEMP/vad-runtime" >> "$GITHUB_ENV"   # built below, so the transcription tests run too
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
