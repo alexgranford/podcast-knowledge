@@ -25,8 +25,6 @@ os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 import numpy as np
 import onnxruntime as ort
 
-ort.set_default_logger_severity(3)    # errors only: a host's hardware-probe warnings are not ours to print
-
 SAMPLE_RATE = 16000
 
 
@@ -80,7 +78,6 @@ class SileroONNX:
 
     def __init__(self, model_path: str | Path, frame_samples: int = 512):
         options = ort.SessionOptions()
-        options.log_severity_level = 3
         options.inter_op_num_threads = 1
         options.intra_op_num_threads = 1
         self.session = ort.InferenceSession(
