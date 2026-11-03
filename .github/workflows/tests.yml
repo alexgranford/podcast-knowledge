@@ -7,6 +7,8 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    env:
+      PODNOTE_VAD_RUNTIME: ${{ runner.temp }}/vad-runtime   # built below, so the transcription tests run too
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,4 +16,5 @@ jobs:
           python-version: "3.12"
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest -q tests
+      - run: python scripts/setup_vad.py
+      - run: python -m pytest -q -rs tests

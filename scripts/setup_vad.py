@@ -39,8 +39,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runtime", default=str(DEFAULT_RUNTIME), help="runtime folder (default: PODNOTE_VAD_RUNTIME)")
     parser.add_argument("--python", default=sys.executable, help="Python used to create the venv (3.11+)")
+    parser.add_argument("--check", action="store_true",
+                        help="only check that the readiness record matches the files it pins; exit 1 when not")
     args = parser.parse_args()
     runtime = Path(args.runtime).expanduser()
+    if args.check:
+        from podcast_transcription import runtime_problem
+        problem = runtime_problem(runtime)
+        print(problem or f"VAD runtime ready: {runtime}")
+        return 1 if problem else 0
     python = runtime / "venv" / "bin" / "python"
     try:
         runtime.mkdir(parents=True, exist_ok=True)

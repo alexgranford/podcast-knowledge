@@ -10,7 +10,9 @@ import hashlib
 import sys
 from pathlib import Path
 
-MONITOR_FILES = ("scripts/podmonitor.py", "tests/test_podmonitor.py", "scripts/podfetch.py")
+MONITOR_FILES = ("scripts/podmonitor.py", "tests/test_podmonitor.py", "scripts/podfetch.py", "scripts/podqueue.py",
+                 "scripts/podshows.py", "scripts/sources/__init__.py", "scripts/sources/apple.py",
+                 "scripts/sources/youtube.py")    # the monitor and what it calls to find and queue episodes
 
 
 def verify(source: Path, installed: Path, wrapper: Path | None = None) -> list[str]:
@@ -24,8 +26,15 @@ def verify(source: Path, installed: Path, wrapper: Path | None = None) -> list[s
             errors.append(f"mismatch {name}: source={hashlib.sha256(expected.read_bytes()).hexdigest()[:12]} "
                           f"installed={hashlib.sha256(actual.read_bytes()).hexdigest()[:12]}")
     if wrapper is not None:
-        if not wrapper.is_file() or str(installed / "scripts/podmonitor.py") not in wrapper.read_text():
-            errors.append(f"cron wrapper does not point to the installed monitor: {wrapper}")
+        import subprocess
+        target = str(installed / "scripts" / "podmonitor.py")
+        found = subprocess.run([sys.executable, str(wrapper), "--check"], capture_output=True, text=True,
+                               timeout=60) if wrapper.is_file() else None
+        if found is None or found.returncode or not found.stdout.startswith(target):
+            errors.append(f"cron wrapper does not run the installed monitor: {wrapper}")
+        elif (source / "hermes" / wrapper.name).is_file() and \
+                (source / "hermes" / wrapper.name).read_bytes() != wrapper.read_bytes():
+            errors.append(f"cron wrapper differs from this checkout's hermes/{wrapper.name}")
     return errors
 
 

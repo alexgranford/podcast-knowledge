@@ -10,6 +10,7 @@ Show: {show}
 Regular hosts: {hosts}
 Episode: {episode}
 Episode description (names here are spelled correctly; it usually says who the guests are): {description}
+Language: the transcript is in {language}. Write the notes in {language}, and copy quotes in the words spoken; keep these markers exactly as shown, in English: **Topic:**, **References:**, [work], [idea], [quote], - none, SKIP.
 
 Write notes on THIS PART ONLY, in Markdown, in exactly this form:
 
@@ -48,6 +49,8 @@ Write tightly in your own words; do not copy whole sentences from the notes. Put
 
 Rules: add nothing that is not in the notes. Keep every attribution exactly as the notes give it: never move a point from one person to another, and never add a name to a point the notes leave unattributed. Use people's names exactly as they appear in the notes or the hosts line; never add or complete a surname from memory. Never mention sponsors, adverts or offers. No preface, no closing remarks, no other headings.
 
+Language: write in {language}, the language of the notes; keep the heading `## Key themes` exactly as shown, in English.
+
 Show: {show}
 Regular hosts: {hosts}
 Episode: {episode}
@@ -66,6 +69,8 @@ Then one clear paragraph of 60 to 110 words: where the discussion goes and where
 Open both with the substance itself, never with "This episode", "This discussion" or "In this episode", and never address or mention the reader or listener.
 
 Rules: add nothing that is not in the themes or the participants line. Keep attributions exactly as the themes give them. No other headings, no bullets, no closing remarks.
+
+Language: write in {language}, the language of the episode; keep the label **Participants:** and the role words host and guest exactly as shown, in English.
 
 Show: {show}
 Hosts taking part: {hosts}

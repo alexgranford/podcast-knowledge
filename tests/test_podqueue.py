@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import podqueue
 
-EP1 = "https://podcasts.apple.com/gb/podcast/show/id123?i=1000000000001"
-EP2 = "https://podcasts.apple.com/gb/podcast/show/id123?i=1000000000002"
+EP1 = "https://podcasts.apple.com/gb/podcast/id123?i=1000000000001"
+EP2 = "https://podcasts.apple.com/gb/podcast/id123?i=1000000000002"
 
 
 class QueueTestCase(unittest.TestCase):
@@ -52,8 +52,8 @@ class QueueTestCase(unittest.TestCase):
 class AddTests(QueueTestCase):
 
     def test_episode_link_is_queued_in_order(self):
-        self.assertEqual("Queued (position 1 of 1).", podqueue.add(EP1, "telegram"))
-        self.assertEqual("Queued (position 2 of 2).", podqueue.add(f"  <{EP2}>  "))
+        self.assertEqual("Queued (position 1 of 1). Language: English.", podqueue.add(EP1, "telegram"))
+        self.assertEqual("Queued (position 2 of 2). Language: English.", podqueue.add(f"  <{EP2}>  "))
         self.assertEqual([EP1, EP2], self.queue())
         self.assertEqual("telegram", json.loads((self.state / "queue-state.json").read_text())[EP1]["source"])
 
@@ -101,8 +101,8 @@ class RunTests(QueueTestCase):
                         "> A longer paragraph on the arguments.\n\n## Key themes\n", encoding="utf-8")
         message = self.run_with(0, f"NOTE: {note}\nSTATUS: complete\n")
         self.assertEqual(EP1, self.ran)
-        self.assertEqual("🟢 The Daily Courier: Forecasts: Who is right?\nClara Benton (host), Hugo Marsh (host)\n"
-                         "Why Labour trails in the polls.", message)
+        self.assertEqual("🟢 **The Daily Courier: Forecasts: Who is right?**\n*Clara Benton (host), Hugo Marsh (host)*\n"
+                         f"> Why Labour trails in the polls.\n{EP1}", message)
         self.assertEqual(str(note), self.qa_ran)
         self.assertEqual([EP2], self.queue())
         self.assertIn("complete\t2026-10-07 - Forecasts", (self.state / "done.txt").read_text())
@@ -117,7 +117,7 @@ class RunTests(QueueTestCase):
 
     def test_existing_note_is_dequeued_silently(self):
         podqueue.add(EP1)
-        self.assertEqual("", self.run_with(0, "note already exists (use --force to overwrite): /v/x.md\n"))
+        self.assertEqual("", self.run_with(0, "note already exists (use --force to overwrite): /v/x.md\nEXISTS: /v/x.md\n"))
         self.assertIsNone(self.qa_ran)
         self.assertEqual([], self.queue())
 
@@ -139,7 +139,7 @@ class RunTests(QueueTestCase):
 
     def test_not_indexed_retries_at_1_3_6_12_hours_then_fails(self):
         podqueue.add(EP1)
-        not_indexed = "STOPPED: Episode not found. Apple has not indexed this episode yet — try again later.\n"
+        not_indexed = "STOPPED: Episode not found. Apple has not indexed this episode yet; try again later.\nRETRY: later\n"
         start = self.clock
         for hours in (1, 3, 6, 12):
             self.assertEqual("", self.run_with(1, not_indexed))
@@ -156,19 +156,15 @@ class RunTests(QueueTestCase):
     def test_a_waiting_retry_does_not_block_the_next_link(self):
         podqueue.add(EP1)
         podqueue.add(EP2)
-        self.run_with(1, "STOPPED: model server unreachable at section 1: refused\n")
+        self.run_with(1, "STOPPED: model server unreachable at section 1: refused\nRETRY: later\n")
         self.run_with(0, "NOTE: /v/E/two.md\nSTATUS: complete\n")
         self.assertEqual(EP2, self.ran)
         self.assertEqual([EP1], self.queue())
 
     def test_listing_shows_pending_retries(self):
         podqueue.add(EP1)
-        self.run_with(1, "STOPPED: model server unreachable at section 1: refused\n")
+        self.run_with(1, "STOPPED: model server unreachable at section 1: refused\nRETRY: later\n")
         self.assertIn("retry 1 due 2026-10-08T11:00:00Z", podqueue.listing())
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class QuickSummaryTests(unittest.TestCase):
@@ -184,8 +180,6 @@ class PlainReasonTests(unittest.TestCase):
 
     def test_failures_are_said_plainly(self):
         say = podqueue.plain_reason
-        self.assertEqual("The audio could not be split for transcription (no pause to cut at).",
-                         say("vad_boundary_unavailable: window_start_ms=0 target_ms=900000 corridor_ms=780000:1020000"))
         self.assertEqual("Apple has not listed this episode yet.", say("Apple episode 1 was not returned for show 2; ..."))
         self.assertEqual("The model ran out of room writing section 3 (0:24:17).",
                          say("note incomplete: section 3 (0:24:17): length"))
@@ -273,6 +267,36 @@ class VerificationRetryTests(QueueTestCase):
         self.assertIn(str(note), self.retries())
 
 
+class LongEpisodeTests(QueueTestCase):
+
+    def test_a_run_stopped_by_the_time_limit_that_saved_work_carries_on_next_tick(self):
+        cache = self.state.parent / "cache"
+        job = cache / "jobs" / "podcast-1000000000001" / "asr"
+        podqueue.add(EP1)
+        windows = iter(range(100))
+
+        def podnote(url, language="", source="", force=False):   # each run transcribes a window, then runs out of time
+            job.mkdir(parents=True, exist_ok=True)
+            (job / f"window-{next(windows)}.json").write_text("{}")
+            return 1, "STOPPED: podnote timed out after 40 minutes"
+        with mock.patch.object(podqueue, "CACHE", cache), mock.patch.object(podqueue, "release_models"), \
+                mock.patch.object(podqueue, "run_podnote", podnote), mock.patch.object(podqueue, "run_verify"):
+            for run in range(podqueue.RESUMES):
+                self.assertEqual("", podqueue.run())
+                entry = podqueue.load_state()[EP1]
+                self.assertEqual((run + 1, 0, podqueue.iso(self.clock)), (entry["resumes"], entry["attempts"], entry["next_try"]))
+            self.assertIn("work so far is saved", entry["last_reason"])
+            self.assertEqual("", podqueue.run())                    # resumes used up: an ordinary retry from here
+            self.assertEqual(1, podqueue.load_state()[EP1]["attempts"])
+
+    def test_a_run_stopped_by_the_time_limit_with_nothing_saved_is_an_ordinary_retry(self):
+        podqueue.add(EP1)
+        with mock.patch.object(podqueue, "CACHE", self.state.parent / "cache"), mock.patch.object(podqueue, "release_models"):
+            self.run_with(1, "STOPPED: podnote timed out after 40 minutes")
+        entry = podqueue.load_state()[EP1]
+        self.assertEqual((1, None), (entry["attempts"], entry.get("resumes")))
+
+
 class ModelReleaseTests(QueueTestCase):
 
     def test_models_are_released_only_after_a_run_died(self):
@@ -285,3 +309,53 @@ class ModelReleaseTests(QueueTestCase):
             self.assertEqual(2, release.call_count)
             self.run_with(1, "STOPPED: model server unreachable at section 2: refused")   # an ordinary stop
             self.assertEqual(2, release.call_count)
+
+
+class RetryFlagTests(QueueTestCase):
+
+    def test_the_retry_line_decides_not_the_wording(self):
+        podqueue.add(EP1)
+        podqueue.add(EP2)
+        self.run_with(1, "STOPPED: audio download: Audio server returned HTTP 503; try again later\nRETRY: later")
+        self.assertEqual(1, podqueue.load_state()[EP1]["attempts"])                 # kept, tried again later
+        message = self.run_with(1, "STOPPED: YouTube says this video is private")
+        self.assertTrue(message.startswith("🔴"), message)                          # no RETRY line: final
+        self.assertNotIn(EP2, self.queue())
+
+
+class FinishedMessageTests(unittest.TestCase):
+
+    def test_the_message_lists_the_key_themes(self):
+        note = ("# Ep\n\n> [!abstract] Summary\n> **Participants:** **Rowan Mae Ellis** (host)\n>\n> A take.\n\n"
+                "## Key themes\n\n### The **night** sky\n> Essence.\n\n- point\n\n### Tides\n- point\n\n"
+                "## References\n\n### Ideas\n- not a theme\n")
+        note = note.replace("- point\n\n### Tides", "- **Dark skies** — far from towns.\n- **Planets**: visible now.\n\n### Tides")
+        themes = podqueue.key_themes(note)
+        self.assertEqual([("The night sky", ["Dark skies", "Planets"]), ("Tides", [])], themes)
+        self.assertEqual("🟢 **Show: Ep**\n*Rowan Mae Ellis (host)*\n> A take.\nhttps://youtu.be/x\n\n**Key themes**\n"
+                         "• **The night sky**\n   – Dark skies\n   – Planets\n• **Tides**",
+                         podqueue.finished_message("Show", "Ep", "Rowan Mae Ellis (host)", "A take.", themes,
+                                                   "https://youtu.be/x"))
+        self.assertEqual("🟢 **Show: Ep**", podqueue.finished_message("Show", "Ep", "", "", []))
+        self.assertEqual("🟢 **Show: Ep 2x**", podqueue.finished_message("Show", "Ep *2x*", "", "", []))   # no stray marks
+
+    def test_the_link_is_the_notes_own_source_without_extras_and_no_language_is_named(self):
+        with tempfile.TemporaryDirectory() as folder:
+            note = Path(folder) / "Show" / "2026-11-01 - Ep.md"
+            note.parent.mkdir()
+            note.write_text("---\nepisode: Ep\nlanguage: el\nsource_url: https://podcasts.apple.com/gb/podcast/ep/"
+                            "id1?i=1000000000001&uo=4\n---\n", encoding="utf-8")
+            message = podqueue.note_message("https://podcasts.apple.com/gb/podcast/id1?i=1000000000001", str(note))
+        self.assertEqual("🟢 **Show: Ep**\nhttps://podcasts.apple.com/gb/podcast/ep/id1?i=1000000000001", message)
+        self.assertEqual("https://www.youtube.com/watch?v=abc",
+                         podqueue.source_link("source_url: 'https://www.youtube.com/watch?v=abc&t=10s'\n"))
+        self.assertEqual("", podqueue.source_link("episode: Ep\n"))
+
+
+class ResultLineTests(unittest.TestCase):
+
+    def test_the_result_lines_are_read_and_the_rest_is_for_people(self):
+        import results
+        output = "checking…\nnote already exists (use --force): /v/a.md\nEXISTS: /v/a.md\nSTOPPED: x\nSTOPPED: y\nRETRY: later\n"
+        self.assertEqual({"EXISTS": "/v/a.md", "STOPPED": "x", "RETRY": "later"}, results.parse(output))
+        self.assertEqual({}, results.parse("NOTES: not a result\n  NOTE: indented is not one\n"))

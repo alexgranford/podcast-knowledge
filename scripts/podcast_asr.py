@@ -20,10 +20,6 @@ class ASRWindowError(RuntimeError):
     pass
 
 
-class VADBoundaryUnavailable(ASRWindowError):
-    pass
-
-
 class TemporalCoverageError(ASRWindowError):
     pass
 

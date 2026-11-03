@@ -60,8 +60,6 @@ class StoreCase(unittest.TestCase):
         return self.store.get_job("podcast-test")
 
 
-
-
 class MigrationAndRecoveryTests(StoreCase):
     def test_migration_is_idempotent_and_versioned(self) -> None:
         self.store.migrate()
@@ -73,11 +71,6 @@ class MigrationAndRecoveryTests(StoreCase):
             [tuple(row[:2]) for row in rows],
         )
         self.assertTrue(all(len(row["sha256"]) == 64 for row in rows))
-
-
-
-
-
 
 
 class TransitionAndLockTests(StoreCase):
@@ -98,14 +91,3 @@ class TransitionAndLockTests(StoreCase):
             first.release()
         with SingleWorkerLock(lock_path):
             self.assertTrue(lock_path.is_file())
-
-
-
-
-
-
-
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

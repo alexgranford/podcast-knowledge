@@ -182,10 +182,6 @@ class TranscriptionIntegrationTests(TranscriptionFixture):
         self.assertEqual(len(self.store.list_artifacts(self.job_id, "asr-window-accepted")), 0)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class NameHintTests(TranscriptionFixture):
     HINT = "Podcast: Ask the Astronomer. Hosts: Rowan Mae Ellis. Names: Arthur Conan Doyle. Episode: The Baskervilles."
 
@@ -220,7 +216,7 @@ class NameHintTests(TranscriptionFixture):
         self.assertEqual(result["status"], "transcript_assembled")
         self.assertEqual([self.HINT, None], self.prompts)
         accepted = self.accepted()
-        self.assertEqual("dropped: the transcript repeats the hint", accepted["asr_hint"])
+        self.assertEqual("dropped: the transcript reads the hint out", accepted["asr_hint"])
         self.assertEqual("Rowan talks to Arthur Conan Doyle about the moors.", accepted["text"])
 
     def test_a_shorter_hint_is_tried_before_none(self) -> None:
@@ -243,11 +239,68 @@ class NameHintTests(TranscriptionFixture):
         self.assertEqual([self.HINT, "Podcast: Ask the Astronomer."], self.prompts)   # read back, so the shorter one
         self.assertEqual("used (shorter hint)", self.accepted()["asr_hint"])
 
+
+class LanguageTests(TranscriptionFixture):
+
+    def test_the_episode_language_is_sent_with_every_window_and_recorded(self) -> None:
+        sent = []
+
+        def asr(window_audio, raw_output, model, base_url, prompt=None, language=None):
+            sent.append(language)
+            duration = probe_audio(window_audio)["duration_seconds"]
+            body = {"model": model, "language": "greek", "text": "Πλήρης μεταγραφή του αποσπάσματος.",
+                    "segments": [{"start": 0.0, "end": duration, "text": "Πλήρης μεταγραφή του αποσπάσματος."}], "finish_reason": "stop"}
+            atomic_json(raw_output, body)
+            return body
+
+        runner = TranscriptionRunner(self.store, self.job_id, self.audio, self.root / "job",
+                                     vad_model_path=DEFAULT_VAD_MODEL, window_policy_path=DEFAULT_WINDOW_POLICY,
+                                     vad_runner=self.fake_vad, request_runner=asr, language="el", language_name="Greek")
+        self.assertEqual("transcript_assembled", runner.run_all()["status"])
+        self.assertEqual(["Greek"], sent)
+        transcript = json.loads((self.root / "job" / "asr" / "transcript-v1.json").read_text(encoding="utf-8"))
+        self.assertEqual("el", transcript["language"])          # the stated language, not the model's spelling of it
+
+
+class PureTests(unittest.TestCase):
+    """Checks that need neither ffmpeg nor the speech-detection runtime, so they run everywhere."""
+
     def test_hint_failure(self) -> None:
         window = {"duration_ms": 14 * 60000}
         speech = " ".join(f"word{i}" for i in range(2000))
-        self.assertEqual("", hint_failure({"text": speech}, window, self.HINT))
-        self.assertEqual("14 words for 14.0 minutes", hint_failure({"text": " ".join(["w"] * 14)}, window, self.HINT))
-        self.assertEqual("the transcript repeats the hint", hint_failure({"text": self.HINT * 40}, window, self.HINT))
-        # a host reading the description once inside a long window is fine
-        self.assertEqual("", hint_failure({"text": speech + " " + self.HINT}, window, self.HINT))
+        self.assertEqual("", hint_failure({"text": speech}, window, NameHintTests.HINT))
+        self.assertEqual("14 words for 14.0 minutes", hint_failure({"text": " ".join(["w"] * 14)}, window, NameHintTests.HINT))
+        bare = "Rowan Mae Ellis Arthur Conan Doyle The Baskervilles Episode " * 100     # the hint's words, no frame
+        self.assertEqual("the transcript repeats the hint", hint_failure({"text": bare}, window, "Names: " + bare))
+        # the hint read out before the speech: the frame gives it away, however long the speech after it
+        self.assertEqual("the transcript reads the hint out", hint_failure({"text": NameHintTests.HINT + " " + speech}, window, NameHintTests.HINT))
+        # a host saying the show's name, hosts and episode in their own words is fine
+        spoken = "Welcome to Ask the Astronomer, I'm Rowan Mae Ellis, and today: The Baskervilles. "
+        self.assertEqual("", hint_failure({"text": spoken + speech}, window, NameHintTests.HINT))
+
+    def test_the_request_names_the_language(self) -> None:
+        from unittest import mock
+        import podcast_transcription
+        with mock.patch.object(podcast_transcription.subprocess, "run",
+                               return_value=mock.Mock(returncode=1, stdout="", stderr="x")) as run:
+            with tempfile.TemporaryDirectory() as folder, self.assertRaises(Exception):
+                audio = Path(folder) / "window.wav"
+                audio.write_bytes(b"")
+                podcast_transcription.default_request_runner(audio, Path(folder) / "raw.json", "m", None, language="Greek")
+        command = run.call_args.args[0]
+        self.assertEqual("Greek", command[command.index("--language") + 1])
+
+
+def test_the_readiness_record_must_match_every_file_it_pins(tmp_path):
+    import json
+    import podcast_transcription as pt
+    (tmp_path / "requirements.lock").write_text("onnxruntime==1\n")
+    ready = {"status": "ready", "model_sha256": pt.file_sha256(pt.DEFAULT_VAD_MODEL),
+             "cli_sha256": pt.file_sha256(pt.DEFAULT_VAD_CLI), "policy_sha256": pt.file_sha256(pt.DEFAULT_WINDOW_POLICY),
+             "requirements_lock_sha256": pt.file_sha256(tmp_path / "requirements.lock")}
+    (tmp_path / "READY.json").write_text(json.dumps(ready))
+    assert pt.runtime_problem(tmp_path) == ""
+    (tmp_path / "READY.json").write_text(json.dumps(ready | {"cli_sha256": "0" * 64}))    # the VAD script changed
+    assert pt.runtime_problem(tmp_path) == "VAD runtime readiness/hash validation failed"
+    (tmp_path / "READY.json").unlink()
+    assert pt.runtime_problem(tmp_path).startswith("VAD runtime readiness record is absent")

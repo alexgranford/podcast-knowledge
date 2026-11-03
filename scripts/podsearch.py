@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """podsearch — queue a show's episodes whose titles contain a phrase.
 
-    podsearch.py "<Apple show link>" "<phrase>" [--period "this year"] [--all] [--dry-run]
+    podsearch.py "<show>" "<phrase>" [--period "this year"] [--all] [--dry-run] [--language L]
 
-The show's RSS feed lists every episode; titles are matched against the phrase ignoring case and
-punctuation ("Night Sky" finds "NIGHT-SKY"). Each match is turned into an ordinary Apple episode
-link (the US catalogue first) and added to the podcast queue, which skips episodes already in the
-library or the queue. Up to 10 matches are queued at once; with more, they are listed and nothing is
-queued unless --all is given.
+The show: its Apple Podcasts link, its YouTube channel, @handle or playlist link, or its name or key
+in the show registry. An Apple show is searched in its RSS feed (every episode); a YouTube show in
+its podcast playlist, Videos and Streams tabs (anything under 5 minutes passed over); a show on both,
+in both. Titles are matched against the phrase ignoring case,
+accents and punctuation, in any script ("Night Sky" finds "NIGHT-SKY"). YouTube's listing has no
+dates, so each matching video is looked up (the newest RESOLVE_LIMIT at most) for its date and to
+recognise one already matched on Apple. Each match goes to the podcast queue as an ordinary episode
+link (Apple: the US catalogue first), which skips episodes already in the library or the queue.
+Up to 10 matches are queued at once; with more, they are listed and nothing is queued unless --all
+is given. --language: the language the episodes are in, when the queue asks.
 
 Periods (by release date): "this year", "last year", "this month", "last month", "this week",
 "last week", "last 3 months", "last 2 weeks", "last 10 days", "2026", "2026-09", "since 2026-09-01".
@@ -15,7 +20,6 @@ Periods (by release date): "this year", "last year", "this month", "last month",
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import unicodedata
@@ -30,14 +34,21 @@ import settings  # noqa: E402,F401  (importing it loads the project .env)
 import podfetch  # noqa: E402
 import podmonitor  # noqa: E402
 import podqueue  # noqa: E402
+import languages  # noqa: E402
+import podshows  # noqa: E402
+import sources  # noqa: E402
+from sources import youtube  # noqa: E402
 
 AT_ONCE = 10
+RESOLVE_LIMIT = 40                     # matching videos looked up for their dates, newest first
+LISTING_LIMIT = 5000                   # videos read from a playlist or channel (a long channel: ~15 s)
 
 
 def words(text: str) -> str:
-    """Lower-case letters and digits separated by single spaces; accents and punctuation dropped."""
-    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return " ".join(re.findall(r"[a-z0-9]+", plain.lower()))
+    """Lower-case letters and digits of any script separated by single spaces; accents and
+    punctuation dropped."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    return " ".join(re.findall(r"[^\W_]+", plain.casefold()))
 
 
 def period(text: str, today: date | None = None) -> tuple[date, date]:
@@ -78,61 +89,139 @@ def period(text: str, today: date | None = None) -> tuple[date, date]:
     raise ValueError(f'period not understood: "{text}" (try "this year", "last 3 months", "2026-09")')
 
 
-def apple_links(show: str, country: str) -> tuple[dict[str, str], dict[str, str]]:
-    """({episodeGuid: link}, {title words: link}) for up to Apple's last 200 episodes of the show."""
-    by_guid, by_title = {}, {}
-    for store in podfetch.storefronts(country):
-        query = urllib.parse.urlencode({"id": show, "entity": "podcastEpisode", "limit": 200, "country": store})
-        status, body, _ = podfetch.http_get(f"{podfetch.ITUNES_LOOKUP}?{query}")
-        if status != 200:
-            raise LookupError(f"Apple lookup returned HTTP {status}")
-        for row in json.loads(body).get("results", []):
-            track = row.get("trackId")
-            if not track or row.get("wrapperType") == "track" and row.get("kind") == "podcast":
-                continue
-            link = f"https://podcasts.apple.com/{country}/podcast/id{show}?i={track}"
-            if row.get("episodeGuid"):
-                by_guid.setdefault(row["episodeGuid"], link)
-            if row.get("trackName"):
-                by_title.setdefault(words(row["trackName"]), link)
-    return by_guid, by_title
+def matched(count: int) -> str:
+    return f"{count} episode matches" if count == 1 else f"{count} episodes match"
 
 
-def search(show_link: str, phrase: str, when: str = "", queue_all: bool = False, dry_run: bool = False) -> str:
-    show, episode, country = podfetch.parse_apple_url(show_link)
-    if not show:
-        return "Not a podcast link: give the show's Apple Podcasts link."
+def target(text: str) -> dict:
+    """What to search for the show the user means: {key, title, apple: (show id, storefront) or None,
+    youtube: {channel, playlist} or None}. LookupError when it cannot be told; ValueError for a link
+    that is not a show's."""
+    text = text.strip()
+    registry = podshows.load()
+    if re.search(r"podcasts\.apple\.com", text):
+        show, _, country = podfetch.parse_apple_url(text)
+        entry = registry.get(show) or {}
+        return {"key": show, "title": entry.get("title", ""), "language": entry.get("language", ""), "apple": (show, country or "us"),
+                "youtube": podshows.youtube_link(entry, show) or None}
+    if re.search(r"youtube\.com|youtu\.be", text):
+        ref = sources.parse(text)
+        if ref.episode:
+            raise ValueError("That is a video link: give the show's channel, @handle or playlist link.")
+        try:
+            key = podshows.find(registry, text)
+        except LookupError:
+            found = youtube.channel(ref)                # a show not in the registry yet
+            key = youtube.show_key(found["channel"])
+            entry = registry.get(key) or {}
+            return {"key": key, "title": entry.get("title") or found["title"], "language": entry.get("language", ""),
+                    "apple": (key, entry.get("country") or "us") if key.isdigit() else None,
+                    "youtube": {"channel": found["channel"], "playlist": found["playlist"]}}
+    else:
+        key = podshows.find(registry, text)
+    entry = registry[key]
+    linked = podshows.youtube_link(entry, key) or None
+    return {"key": key, "title": entry.get("title", ""), "language": entry.get("language", ""),
+            "apple": (key, entry.get("country") or "us") if key.isdigit() else None,
+            "youtube": linked if (linked or {}).get("channel") else None}
+
+
+def youtube_matches(found: dict, wanted: str, first: date, last: date, spoken: str = "") -> tuple[list[dict], int, list[str]]:
+    """Matching videos of the show's playlist (or channel), looked up: ([{released, title, link, peek}],
+    videos searched, lines for matches that could not be had or were left unchecked). The listing
+    gives titles machine-translated into English; for a show in another language (spoken) it is read
+    in that language too, and a video matches on either title."""
+    linked = found["youtube"]
+    videos = youtube.recent_videos(linked["channel"], linked.get("playlist") or "", count=LISTING_LIMIT)
+    titles = {v["id"]: [v["title"]] for v in videos}
+    if spoken and spoken != languages.DEFAULT:
+        for other in youtube.recent_videos(linked["channel"], linked.get("playlist") or "", count=LISTING_LIMIT, lang=spoken):
+            titles.setdefault(other["id"], []).append(other["title"])
+    hits = [v for v in videos if any(f" {wanted} " in f" {words(title)} " for title in titles[v["id"]])
+            and not v["signed_in"] and not 0 < v["seconds"] < podmonitor.MIN_SECONDS]
+    notes = [f"? {v['title']} (the newest {RESOLVE_LIMIT} matches only: narrow the phrase or the period)"
+             for v in hits[RESOLVE_LIMIT:]]
+    matches = []
+    for video in hits[:RESOLVE_LIMIT]:
+        try:
+            info = youtube.video_info(video["id"])
+        except sources.SourceError as error:
+            notes.append(f"? {video['title']} ({error})")
+            continue
+        day = youtube.published_day(info)
+        released = date.fromisoformat(day) if day else None
+        if released is not None and not first <= released <= last:
+            continue
+        if float(info.get("duration") or 0) < podmonitor.MIN_SECONDS:
+            continue
+        matches.append({"released": released, "title": str(info.get("title") or video["title"]), "source": "YouTube",
+                        "link": youtube.watch_url(video["id"]),
+                        "peek": youtube.peek_from_info(info, found["key"], video["title"])})
+    return matches, len(videos), notes
+
+
+def search(show_text: str, phrase: str, when: str = "", queue_all: bool = False, dry_run: bool = False,
+           language: str | None = None) -> str:
     wanted = words(phrase)
     if not wanted:
         return "Give a word or phrase to look for in the episode titles."
     first, last = period(when)
-    episodes = podmonitor.feed_episodes(show, country or "us")
-    matches = []
-    for item in episodes:
-        released = item.published.astimezone(timezone.utc).date() if item.published else None
-        if f" {wanted} " in f" {words(item.title)} " and (released is None or first <= released <= last):
-            matches.append((released, item))
-    matches.sort(key=lambda pair: pair[0] or date.min)
+    try:
+        found = target(show_text)
+    except ValueError as error:
+        return f"Not a show link: {error}"
+    matches, searched, notes = [], [], []
+    if found["apple"]:
+        show, country = found["apple"]
+        episodes = podmonitor.feed_episodes(show, country)
+        for item in episodes:
+            released = item.published.astimezone(timezone.utc).date() if item.published else None
+            if f" {wanted} " in f" {words(item.title)} " and (released is None or first <= released <= last):
+                matches.append({"released": released, "title": item.title, "source": "Apple", "item": item,
+                                "peek": sources.apple.peek_from_feed(item, found["key"], podmonitor.FEED_LANGUAGE.get(show, ""))})
+        searched.append(f"{len(episodes)} episodes on Apple")
+    if found["youtube"]:
+        spoken = (languages.code(language) if language else None) or found["language"] or \
+            languages.guess(phrase, least=3)            # a phrase in a non-Latin script says its language
+        videos, count, notes = youtube_matches(found, wanted, first, last, spoken or "")
+        apple = [m for m in matches if m["source"] == "Apple"]
+        for video in videos:                        # one episode on both sources is listed once, from Apple
+            twin = sources.twin_among(video["peek"], [(m, m["peek"]) for m in apple], found["title"])
+            if twin:
+                twin["also"] = " (also on YouTube)"
+            else:
+                matches.append(video)
+        searched.append(f"{count} videos on YouTube")
+    matches.sort(key=lambda match: match["released"] or date.min)
     scope = f'"{phrase}"' + (f", {when.strip()}" if when.strip() else "")
+    where = " and ".join(searched)
     if not matches:
-        return f"No episode titles match {scope} ({len(episodes)} episodes searched)."
-    lines = [f"{released or 'undated'} — {item.title}" for released, item in matches]
+        return "\n".join([f"No episode titles match {scope} ({where} searched)."] + notes)
+
+    def line(match: dict) -> str:
+        label = f" [{match['source']}]" if found["apple"] and found["youtube"] else ""
+        return f"{match['released'] or 'undated'} — {match['title']}{label}{match.get('also', '')}"
     if dry_run or (len(matches) > AT_ONCE and not queue_all):
-        head = (f"{len(matches)} episodes match {scope}" +
+        head = (f"{matched(len(matches))} {scope}" +
                 ("" if dry_run else f"; more than {AT_ONCE}, so none queued yet — say \"queue all\" to add them") + ":")
-        return "\n".join([head] + lines)
-    by_guid, by_title = apple_links(show, country or "us")
+        return "\n".join([head] + [line(m) for m in matches] + notes)
+    apple = [m for m in matches if m["source"] == "Apple"]
+    links = podmonitor.matched_links(*found["apple"], [m["item"] for m in apple],
+                                     podmonitor.apple_episodes(*found["apple"])) if apple else {}
     queued, skipped, missing = [], [], []
-    for released, item in matches:
-        link = by_guid.get(item.guid) or by_title.get(words(item.title))
-        if not link:
-            missing.append(f"{released or 'undated'} — {item.title}")
-            continue
-        answer = podqueue.add(link, source="search")
-        (queued if answer.startswith("Queued") else skipped).append(f"{released or 'undated'} — {item.title} ({answer.rstrip('.')})")
-    report = [f"{len(matches)} episodes match {scope}: {len(queued)} queued, {len(skipped)} skipped, "
-              f"{len(missing)} not found on Apple."]
-    report += [f"+ {line}" for line in queued] + [f"= {line}" for line in skipped] + [f"? {line}" for line in missing]
+    for match in matches:
+        if match["source"] == "Apple":
+            link = links.get(match["item"].guid)
+            if not link:
+                missing.append(line(match))
+                continue
+        else:
+            link = match["link"]
+        answer = podqueue.add(link, source="search", language=language, peek=match["peek"])
+        (queued if answer.startswith("Queued") else skipped).append(f"{line(match)} ({answer.rstrip('.')})")
+    report = [f"{matched(len(matches))} {scope}: {len(queued)} queued, {len(skipped)} skipped"
+              + (f", {len(missing)} not found on Apple" if missing else "") + "."]
+    report += [f"+ {l}" for l in queued] + [f"= {l}" for l in skipped] + [f"? {l}" for l in missing] + notes
     return "\n".join(report)
 
 
@@ -143,14 +232,18 @@ def main() -> int:
     parser.add_argument("--period", default="")
     parser.add_argument("--all", action="store_true", help=f"queue every match, even more than {AT_ONCE}")
     parser.add_argument("--dry-run", action="store_true", help="list the matches, queue nothing")
+    parser.add_argument("--language", default=None, help="the language the episodes are in, if the queue asks")
     args = parser.parse_args()
     try:
-        print(search(args.show, args.phrase, args.period, args.all, args.dry_run))
+        print(search(args.show, args.phrase, args.period, args.all, args.dry_run, args.language))
     except ValueError as error:
         print(str(error))
         return 1
     except LookupError as error:
         print(f"Could not read the show: {error}")
+        return 1
+    except sources.SourceError as error:
+        print(f"Could not read the show on YouTube: {error}")
         return 1
     return 0
 

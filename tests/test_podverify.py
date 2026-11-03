@@ -506,10 +506,6 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(("remove", None), podverify.check_quote('"give up"', said))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BookResolverTests(unittest.TestCase):
     """Books are named by the web (search results read by the model), never by memory."""
 

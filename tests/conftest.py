@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import settings  # noqa: F401,E402  (importing it loads .env)
+import podmonitor  # noqa: E402
 import podnote  # noqa: E402
 import podqueue  # noqa: E402
 import podshows  # noqa: E402
@@ -36,8 +37,30 @@ def private_registry(tmp_path, monkeypatch):
                            ("tag-vocabulary.json", {"canonical_tags": TEST_TAGS})):
             (rules / name).write_text(json.dumps(data))
     monkeypatch.setattr(podshows, "STATE", tmp_path / "registry-state")
+    import store
+    for module in (podqueue, podmonitor, podnote, store):   # never the real queue, store, monitor state or names.txt
+        monkeypatch.setattr(module, "STATE", tmp_path / "state")
+    monkeypatch.setattr(podnote, "NAMES_FILE", tmp_path / "state" / "names.txt")
     for module in (podnote, podqueue):                      # never the real cache: the queue cleans it
         monkeypatch.setattr(module, "CACHE", tmp_path / "cache")
-    monkeypatch.setattr(podshows, "ROOT", root)
-    monkeypatch.setattr(podnote, "ROOT", root)
+    for module in (podshows, podnote, podqueue):            # never the real library
+        monkeypatch.setattr(module, "ROOT", root)
     monkeypatch.setattr(podnote, "SCRIPT_TAG", os.environ.get("PODNOTE_SCRIPT_TAG") or "script-made")   # the folder's marker
+    import sources                                          # no network: a source lookup tells nothing in tests
+    monkeypatch.setattr(sources.apple, "peek", lambda ref: None)
+    monkeypatch.setattr(sources.youtube, "peek", lambda ref: None)
+    real = sources.youtube.ytdlp_program                    # YouTube on unless a test switches it off ("")
+    monkeypatch.setattr(sources.youtube, "ytdlp_program",
+                        lambda: real() if os.environ.get("PODNOTE_YTDLP") == "" else "/usr/bin/yt-dlp")
+    import notify                                           # never a real message, never the real user list
+    import users
+    monkeypatch.setattr(users, "STATE", tmp_path / "users-state")
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda target, text, who="": sent.append((users.normalize(target), text)) or True)
+    notify.sent = sent
+    for module in (podshows, podnote, podqueue, podmonitor, users, store):   # nothing real is read or written
+        for name in ("ROOT", "STATE", "CACHE"):
+            if hasattr(module, name):
+                assert str(getattr(module, name)).startswith(str(tmp_path)), f"{module.__name__}.{name} is not the test's"
+    for name in ("HERMES_SESSION_PLATFORM", "HERMES_SESSION_USER_ID", "HERMES_SESSION_CHAT_ID", "HERMES_SESSION_USER_NAME"):
+        monkeypatch.delenv(name, raising=False)

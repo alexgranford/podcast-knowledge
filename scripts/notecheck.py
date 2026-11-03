@@ -26,6 +26,8 @@ EPISODE_PROFILE = {"fields": {
     "episode": {"type": "text", "required": True},
     "source_url": {"type": "url", "required": True},
     "apple_episode_id": {"type": "identifier", "pattern": "[0-9]+"},
+    "youtube_video_id": {"type": "identifier", "pattern": "[A-Za-z0-9_-]{11}"},
+    "language": {"type": "identifier", "pattern": "[a-z]{2}"},
     "hosts": {"type": "text_list"},
     "guests": {"type": "text_list"},
     "publisher": {"type": "text"},

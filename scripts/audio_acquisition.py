@@ -189,16 +189,139 @@ def download_audio(
     raise AudioSecurityError(f"Audio redirect limit exceeded ({MAX_AUDIO_REDIRECTS})")
 
 
+def _content_range_total(value: str | None) -> int | None:
+    try:
+        return int(str(value).rsplit("/", 1)[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def download_ranges(
+    url: str,
+    destination: str | Path,
+    range_bytes: int,
+    timeout_seconds: int = 60,
+    max_elapsed_seconds: int = 3600,
+    cancelled: Callable[[], bool] | None = None,
+    same_stream: Callable[[str], bool] | None = None,
+    expected_bytes: int | None = None,
+) -> dict:
+    """Download in fixed-size Range requests to a .part file, resume from it, then atomically publish.
+    For hosts that throttle one long response to playback speed but serve each range at full speed
+    (YouTube's stream servers). A redirect is followed only to an address same_stream accepts (the
+    same stream on another server of the host); any other is refused as a transient error, so the
+    caller asks for a fresh link. expected_bytes: the size the source gave; any other total is refused."""
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    part = destination.with_suffix(destination.suffix + ".part")
+    started = time.monotonic()
+    current_url = url
+    parsed, approved_address = public_endpoint(current_url)
+    path = urllib.parse.urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+    total = content_type = None
+    resumed_from = part.stat().st_size if part.exists() else 0
+    redirects = 0
+    while True:
+        offset = part.stat().st_size if part.exists() else 0
+        if offset > MAX_AUDIO_BYTES:
+            raise AudioSecurityError("Audio exceeds the maximum allowed size")
+        if total is not None and offset >= total:
+            break
+        if cancelled and cancelled():
+            raise AudioCancelled("Audio download cancelled")
+        if time.monotonic() - started > max_elapsed_seconds:
+            raise AudioTransientError("Audio download exceeded elapsed-time limit")
+        headers = {
+            "User-Agent": "podcast-knowledge/1.0",
+            "Accept": "audio/*,application/octet-stream;q=0.8",
+            "Accept-Encoding": "identity",
+            "Range": f"bytes={offset}-{offset + range_bytes - 1}",
+        }
+        connection = PinnedHTTPSConnection(parsed.hostname or "", approved_address, parsed.port or 443, timeout_seconds)
+        try:
+            connection.request("GET", path, headers=headers)
+            response = connection.getresponse()
+            if response.status in {301, 302, 303, 307, 308}:
+                location = urllib.parse.urljoin(current_url, response.getheader("Location") or "")
+                if not (same_stream and response.getheader("Location") and same_stream(location)):
+                    raise AudioTransientError(f"Audio server redirected (HTTP {response.status}) to an address "
+                                              f"that is not the same stream; not followed")
+                redirects += 1
+                if redirects > MAX_AUDIO_REDIRECTS:
+                    raise AudioSecurityError(f"Audio redirect limit exceeded ({MAX_AUDIO_REDIRECTS})")
+                current_url = location                  # later ranges go straight to the new server
+                parsed, approved_address = public_endpoint(current_url)
+                path = urllib.parse.urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+                continue
+            if response.status == 416 and offset:
+                total = offset                          # the part already holds every byte
+                continue
+            if response.status == 429 or 500 <= response.status < 600:
+                raise AudioTransientError(f"Audio server returned HTTP {response.status}")
+            if response.status not in {200, 206}:
+                raise AudioError(f"Audio server returned HTTP {response.status}")
+            content_type = (response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type and not (content_type.startswith("audio/") or content_type == "application/octet-stream"):
+                raise AudioError(f"Unexpected audio response type: {content_type}")
+            if response.status == 206:
+                if _content_range_start(response.getheader("Content-Range")) != offset:
+                    raise AudioError("Audio server returned an invalid resume range")
+                total = _content_range_total(response.getheader("Content-Range"))
+                if total is None:
+                    raise AudioError("Audio server gave no total size in its range answer")
+                mode = "ab"
+            else:                                       # the whole file in one answer
+                mode, offset = "wb", 0
+            if total is not None and total > MAX_AUDIO_BYTES:
+                raise AudioSecurityError("Audio exceeds the maximum allowed size")
+            if expected_bytes and total is not None and total != expected_bytes:
+                part.unlink(missing_ok=True)
+                raise AudioTransientError(f"Audio server offered {total} bytes, not the stream's {expected_bytes}; "
+                                          f"not downloaded")
+            received = offset
+            with part.open(mode) as stream:
+                while chunk := response.read(CHUNK_BYTES):
+                    received += len(chunk)
+                    if received > MAX_AUDIO_BYTES:
+                        raise AudioSecurityError("Audio exceeds the maximum allowed size")
+                    stream.write(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if response.status == 200:
+                total = received
+                if expected_bytes and total != expected_bytes:
+                    part.unlink(missing_ok=True)
+                    raise AudioTransientError(f"Audio server sent {total} bytes, not the stream's {expected_bytes}")
+            elif received == offset:
+                raise AudioTransientError("Audio server sent an empty range")
+        except (OSError, TimeoutError, http.client.HTTPException) as error:
+            raise AudioTransientError(f"Audio download failed: {error}") from error
+        finally:
+            connection.close()
+    os.replace(part, destination)
+    return {
+        "path": str(destination),
+        "final_url": current_url,
+        "bytes": destination.stat().st_size,
+        "content_type": content_type or None,
+        "resumed_from": resumed_from,
+    }
+
+
 def acquire_audio(
     source: str | Path,
     destination: str | Path,
     allowed_local_roots: tuple[str | Path, ...] = (),
+    range_bytes: int = 0,
     **download_options,
 ) -> dict:
+    """A remote file (HTTPS; in range_bytes pieces when given) or an allow-listed local one."""
     parsed = urllib.parse.urlparse(str(source))
     if parsed.scheme:
         if parsed.scheme != "https":
             raise AudioSecurityError("Remote audio URL must use HTTPS")
+        if range_bytes:
+            return download_ranges(str(source), destination, range_bytes, **download_options)
         return download_audio(str(source), destination, **download_options)
     local = _safe_local_source(source, allowed_local_roots)
     destination = Path(destination)
@@ -248,11 +371,3 @@ def probe_audio(path: str | Path) -> dict:
     }
 
 
-def duration_warning(expected: int | None, actual: float) -> str | None:
-    if expected is None or expected <= 0:
-        return None
-    tolerance = max(10.0, expected * 0.02)
-    difference = abs(actual - expected)
-    if difference <= tolerance:
-        return None
-    return f"audio_duration_mismatch: expected={expected}s actual={actual:.3f}s difference={difference:.3f}s"

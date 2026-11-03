@@ -47,7 +47,3 @@ class ModelResidencyTests(unittest.TestCase):
             self.assertTrue(reconciled["cleaned"])
             self.assertEqual([], reconciled["loaded_models"])
             self.assertIsNone(reconciled["lease"])
-
-
-if __name__ == "__main__":
-    unittest.main()

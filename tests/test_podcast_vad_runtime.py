@@ -52,8 +52,3 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(["CPUExecutionProvider"], body["provider"])
         self.assertEqual(0.0, body["repeat_max_delta"])
         self.assertEqual("", result.stderr)
-
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
