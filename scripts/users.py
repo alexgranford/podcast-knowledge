@@ -40,10 +40,23 @@ def path() -> Path:
     return STATE / "users.json"
 
 
-def load() -> dict:
+class Unreadable(Exception):
+    """users.json is there but cannot be read or is not a list of people: nothing may be written over it."""
+
+
+def load(strict: bool = False) -> dict:
+    """The people; {} when there is no file yet. A file that cannot be read gives {} to a reader, so a
+    message is skipped rather than sent wrongly; strict (a change about to be saved) raises Unreadable."""
     try:
-        return json.loads(path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        users = json.loads(path().read_text(encoding="utf-8"))
+        if not isinstance(users, dict):
+            raise ValueError("not an object")
+        return users
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        if strict:
+            raise Unreadable(f"{path()} cannot be read ({type(error).__name__}); fix or restore it") from None
         return {}
 
 
@@ -53,7 +66,7 @@ def editing():
     STATE.mkdir(parents=True, exist_ok=True)
     with (STATE / "users.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        users = load()
+        users = load(strict=True)
         yield users
         atomic_write(path(), json.dumps(users, ensure_ascii=False, indent=2) + "\n", mode=0o600)
 
@@ -97,19 +110,32 @@ def admin(users: dict | None = None) -> tuple[str, dict]:
     return next(((key, user) for key, user in users.items() if user.get("role") == "admin"), ("admin", {"name": "admin", "role": "admin"}))
 
 
+LOCAL = ("cli", "local", "cron")       # Hermes platforms that are the machine itself, not a chat
+
+
+def in_chat() -> bool:
+    """A chat session is asking (Hermes names a chat platform), whether or not it says who."""
+    platform = os.environ.get("HERMES_SESSION_PLATFORM", "").strip().lower()
+    return bool(platform) and platform not in LOCAL
+
+
 def session_identity() -> tuple[str, str]:
-    """('platform:user id', profile name) of the person the agent is answering, or ('', '') outside a chat."""
+    """('platform:user id', profile name) of the person the agent is answering, or ('', '') outside a chat
+    or when the chat does not say who."""
     platform = os.environ.get("HERMES_SESSION_PLATFORM", "").strip().lower()
     user = os.environ.get("HERMES_SESSION_USER_ID", "").strip() or os.environ.get("HERMES_SESSION_CHAT_ID", "").strip()
-    if not platform or not user or platform in ("cli", "local", "cron"):
+    if not in_chat() or not user:
         return "", ""
     return normalize(f"{platform}:{user}"), os.environ.get("HERMES_SESSION_USER_NAME", "").strip()
 
 
 def current() -> tuple[str, dict, bool]:
-    """(key, entry, new) of the person asking. Outside a chat session: the admin. Someone not in the list
-    yet is added as a member (new is True: the caller tells the admin)."""
+    """(key, entry, new) of the person asking. Outside a chat session: the admin. A chat session that does
+    not say who is asking: blocked. Someone not in the list yet is added as a member (new is True: the
+    caller tells the admin)."""
     identity, profile = session_identity()
+    if not identity and in_chat():                       # a chat that does not say who: nobody to trust
+        return "", {"name": "unknown", "role": "blocked"}, False
     if not identity:
         key, user = admin()
         return key, user, False

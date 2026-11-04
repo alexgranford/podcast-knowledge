@@ -108,11 +108,23 @@ def test_a_finished_note_goes_to_whoever_queued_it_and_the_followers(people, tmp
     note.write_text("---\nepisode: Ep\nlanguage: en\n---\n## Key themes\n\n### Tides\n- point\n")
     with mock.patch.object(podqueue, "run_podnote", return_value=(0, f"NOTE: {note}\nSTATUS: complete")), \
             mock.patch.object(podqueue, "run_verify", return_value=""), mock.patch.object(podqueue, "refresh_show"):
-        message = podqueue.run()
-    assert message.startswith("🟢 **Harbour Talk: Ep**") and "• **Tides**" in message   # the admin's, as cron output
+        assert podqueue.run() == ""                                          # nothing left to the cron output
+    message = notify.sent[0][1]
+    assert message.startswith("🟢 **Harbour Talk: Ep**") and "• **Tides**" in message
     assert APPLE in message                                                              # the note's own link
-    assert [target for target, _ in notify.sent] == ["whatsapp:440000000003", "whatsapp:440000000002"]
-    assert all(text == message for _, text in notify.sent)
+    assert [target for target, _ in notify.sent] == ["whatsapp:440000000003", "whatsapp:440000000002", "telegram:111"]
+    assert all(text == message for _, text in notify.sent)                               # the admin's copy last
+
+
+def test_an_admin_with_nowhere_to_send_gets_the_note_as_cron_output(people, tmp_path):
+    users.path().write_text(json.dumps({"jo": {**PEOPLE["jo"], "deliver": ""}}))
+    note = tmp_path / "Harbour Talk" / "2026-11-01 - Ep.md"
+    note.parent.mkdir()
+    note.write_text("---\nepisode: Ep\nlanguage: en\n---\n## Key themes\n\n### Tides\n- point\n")
+    podqueue.add(APPLE, "monitor")
+    with mock.patch.object(podqueue, "run_podnote", return_value=(0, f"NOTE: {note}\nSTATUS: complete")), \
+            mock.patch.object(podqueue, "run_verify", return_value=""), mock.patch.object(podqueue, "refresh_show"):
+        assert podqueue.run().startswith("🟢")
 
 
 def test_a_failure_goes_to_everyone_who_asked(people):
@@ -381,13 +393,13 @@ def test_a_finished_note_s_messages_survive_a_crash_before_they_are_sent(people,
     with mock.patch.object(podqueue, "run_podnote", return_value=(0, f"NOTE: {note}\nSTATUS: complete")), \
             mock.patch.object(podqueue, "run_verify", return_value=""), mock.patch.object(podqueue, "refresh_show"), \
             mock.patch.object(podqueue, "deliver"):                               # the process dies before sending
-        assert podqueue.run().startswith("🟢")
-    assert podqueue.read_lines(podqueue.STATE / "queue.txt") == []              # finished and its message kept,
-    assert [(row["person"], row["state"]) for row in outbox()] == [("robin", "pending")]   # in one commit
+        assert podqueue.run() == ""
+    assert podqueue.read_lines(podqueue.STATE / "queue.txt") == []              # finished and its messages kept,
+    assert [(row["person"], row["state"]) for row in outbox()] == [("robin", "pending"), ("jo", "pending")]   # in one commit
     notify.sent.clear()
-    assert podqueue.deliver() == 1                                              # the next tick sends it
-    assert [target for target, _ in notify.sent] == ["whatsapp:440000000002"]
-    assert outbox()[0]["state"] == "sent"
+    assert podqueue.deliver() == 2                                              # the next tick sends them
+    assert [target for target, _ in notify.sent] == ["whatsapp:440000000002", "telegram:111"]
+    assert {row["state"] for row in outbox()} == {"sent"}
 
 
 def test_a_failed_send_is_tried_again_later_then_given_up(people):
@@ -534,3 +546,72 @@ def test_a_busy_phrase_in_prose_does_not_keep_a_stopped_episode_queued(people):
         podqueue.run()
     assert podqueue.read_lines(podqueue.STATE / "queue.txt") == []
     assert "this link is not an episode" in (podqueue.STATE / "failed.txt").read_text()
+
+
+def test_a_broken_user_list_is_never_written_over(people):
+    users.path().write_text('{"jo": {"name": "Jo", "role": "admin"')          # cut short: not JSON
+    session(people, "whatsapp", "449999999999", "Sam Sample")
+    with pytest.raises(users.Unreadable):
+        users.current()                                                    # a newcomer cannot replace everyone
+    assert users.path().read_text() == '{"jo": {"name": "Jo", "role": "admin"'
+    assert users.load() == {}                                              # a reader sends nothing instead
+
+
+def test_a_chat_that_does_not_say_who_is_asking_is_nobody(people, capsys):
+    session(people, "telegram", "")
+    key, user, new = users.current()
+    assert (key, user["role"], new) == ("", "blocked", False)
+    assert users.admin_only("change the queue by hand").startswith("Only Jo")
+    assert json.loads(users.path().read_text()) == PEOPLE                  # nobody was added
+
+
+def test_only_the_admin_runs_the_worker_and_the_monitor_or_reads_the_digest(people, capsys):
+    import podmonitor
+    session(people, "whatsapp", "440000000002", "Robin")
+    for module, argv in ((podqueue, ["podqueue.py"]), (podqueue, ["podqueue.py", "run"]), (podmonitor, ["podmonitor.py"])):
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(podqueue, "run", side_effect=AssertionError), \
+                mock.patch.object(podmonitor, "check", side_effect=AssertionError):
+            assert module.main() == 1
+        assert capsys.readouterr().out.startswith("Only Jo")
+    (podshows.STATE / "shows-changes.log").write_text("2026-11-01T10:00:00\tHarbour Talk\tfollowed by Jo\n")
+    assert shows("digest", people, capsys)[0] == 1
+    assert not (podshows.STATE / "shows-digest.json").exists()             # still unread for the admin
+
+
+def test_a_finish_rolled_back_logs_nothing_so_its_retry_logs_once(people, tmp_path):
+    note = tmp_path / "Harbour Talk" / "2026-11-01 - Ep.md"
+    note.parent.mkdir()
+    note.write_text("---\nepisode: Ep\nlanguage: en\n---\n## Key themes\n\n### Tides\n- point\n")
+    podqueue.add(APPLE, "monitor")
+    real = podqueue.export
+    with mock.patch.object(podqueue, "run_podnote", return_value=(0, f"NOTE: {note}\nSTATUS: complete")), \
+            mock.patch.object(podqueue, "run_verify", return_value=""), mock.patch.object(podqueue, "refresh_show"):
+        with mock.patch.object(podqueue, "export", side_effect=OSError(28, "No space left on device")):
+            with pytest.raises(OSError):
+                podqueue.run()
+        assert podqueue.read_lines(podqueue.STATE / "queue.txt") == [APPLE]          # still queued
+        assert not (podqueue.STATE / "done.txt").exists()
+        with mock.patch.object(podqueue, "export", real):
+            podqueue.run()
+    assert len((podqueue.STATE / "done.txt").read_text().splitlines()) == 1
+
+
+def test_a_follow_notice_is_sent_even_if_the_table_cannot_be_redrawn(people, capsys):
+    session(people, "whatsapp", "440000000002", "Robin")
+    with mock.patch.object(podshows, "render", side_effect=OSError(28, "No space left on device")):
+        with pytest.raises(OSError):
+            shows("follow Harbour Talk", people, capsys)
+    assert notify.sent == [("telegram:111", "👤 Robin follows Harbour Talk")]
+
+
+def test_two_processes_opening_a_new_store_at_once_both_succeed(tmp_path):
+    import subprocess
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    code = "import store; store.transaction().__enter__()"   # connect, WAL, schema, BEGIN IMMEDIATE
+    for attempt in range(8):
+        state = tmp_path / f"fresh-{attempt}"
+        env = {**__import__("os").environ, "PODNOTE_STATE": str(state), "PODNOTE_ENV_FILE": "/nonexistent"}
+        runs = [subprocess.Popen([sys.executable, "-c", code], cwd=scripts, env=env, stderr=subprocess.PIPE, text=True)
+                for _ in range(3)]
+        errors = [run.communicate(timeout=60)[1] for run in runs]
+        assert all(run.returncode == 0 for run in runs), errors

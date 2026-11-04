@@ -349,6 +349,17 @@ class TwinFixture(unittest.TestCase):
 
 class TwinEpisodeTests(TwinFixture):
 
+    def test_two_episodes_of_one_source_with_one_title_are_both_queued(self):
+        other = "https://podcasts.apple.com/gb/podcast/id1999999901?i=1000000099449"
+        for link in (APPLE, other):
+            self.assertTrue(podqueue.add(link, "monitor", peek=dict(self.apple)).startswith("Queued"))
+        self.assertEqual([APPLE, other], podqueue.read_lines(self.state / "queue.txt"))
+
+    def test_two_candidates_with_the_title_leave_the_match_in_doubt(self):
+        one, two = {**self.apple, "source": "apple", "id": "1"}, {**self.apple, "source": "apple", "id": "2"}
+        self.assertIsNone(sources.twin_among({**self.video, "source": "youtube"}, [("a", one), ("b", two)], "Harbour Talk"))
+        self.assertEqual("a", sources.twin_among({**self.video, "source": "youtube"}, [("a", one)], "Harbour Talk"))
+
     def test_same_show_title_and_time_is_one_episode(self):
         self.assertEqual("title", sources.match(self.apple, self.video, "Harbour Talk"))
         for other in ({"title": "Why the Tide Will Turn – Sam Rivers Part 2"}, {"published": "2026-11-03T19:00:00"},
@@ -562,6 +573,27 @@ class YouTubeMonitorTests(TwinFixture):
             podmonitor.check_youtube("1999999901", state)
         self.assertEqual([f"https://www.youtube.com/watch?v={VIDEO}"], podqueue.read_lines(self.state / "queue.txt"))
 
+
+    def test_a_fresh_stream_on_a_tab_seen_late_is_queued(self):
+        with podshows.editing() as registry:
+            podshows.set_youtube(registry["1999999901"], "1999999901", {"channel": CHANNEL, "playlist": "", "linked_by": "user"})
+        state = {f"youtube:{CHANNEL}": {"seen": ["aaaaaaaaaaa"], "pending": {}, "tabs": ["videos"],
+                                        "initialised": "2026-10-30T12:00:00Z"}}     # Streams unreadable back then
+        videos = [{"id": "aaaaaaaaaaa", "title": "Old", "seconds": 3600, "signed_in": False, "tab": "videos"}]
+        old = {"id": "Xx0Strea000", "title": "Old stream", "seconds": 5400, "signed_in": False, "tab": "streams"}
+        new = {"id": VIDEO, "title": "New stream", "seconds": 6016, "signed_in": False, "tab": "streams"}
+        infos = {VIDEO: INFO, old["id"]: {**INFO, "id": old["id"], "timestamp": INFO["timestamp"] - 7 * 86400}}
+        with mock.patch.object(youtube, "recent_videos", lambda *a, **k: videos + [new, old]), \
+                mock.patch.object(youtube, "video_info", lambda video, fresh=False: infos[video]):
+            podmonitor.check_youtube("1999999901", state)
+        self.assertEqual([f"https://www.youtube.com/watch?v={VIDEO}"], podqueue.read_lines(self.state / "queue.txt"))
+        self.assertIn(old["id"], state[f"youtube:{CHANNEL}"]["seen"])
+
+    def test_an_empty_listing_at_first_sight_initialises_nothing(self):
+        self.listing, state = [], {}
+        with mock.patch.object(youtube, "recent_videos", lambda *a, **k: []):
+            podmonitor.check_youtube("1999999901", state)
+        self.assertNotIn("initialised", state[f"youtube:{PLAYLIST}"])
 
     def test_a_youtube_copy_waits_for_apple_then_is_made_if_apple_has_none(self):
         self.listing = [{"id": "aaaaaaaaaaa", "title": "Old", "seconds": 3600, "signed_in": False}]

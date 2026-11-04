@@ -554,12 +554,17 @@ def match_episode(
     date_tolerance_days: int = 3,
     ambiguity_margin: float = 0.06,
 ) -> Episode | None:
-    """Match exact GUID first, then title/date/duration with ambiguity rejection."""
+    """Match exact GUID first, then title/date/duration with ambiguity rejection. A GUID the feed gives
+    to several entries settles nothing alone: the audio URL decides among them, else the rest does."""
     if guid:
-        for episode in episodes:
-            if episode.guid.strip() == guid.strip():
-                episode.match_method = "apple_episode_guid"
-                return episode
+        same = [episode for episode in episodes if episode.guid.strip() == guid.strip()]
+        if len(same) > 1 and enclosure_url:
+            same = [episode for episode in same if episode.enclosure_url.strip() == enclosure_url.strip()] or same
+        if len(same) == 1:
+            same[0].match_method = "apple_episode_guid"
+            return same[0]
+        if same:
+            episodes = same                            # one of these: title, date and length choose
 
     if enclosure_url:
         for episode in episodes:

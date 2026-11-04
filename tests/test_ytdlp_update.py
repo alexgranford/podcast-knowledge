@@ -10,10 +10,10 @@ import ytdlp_update
 
 class UpdateTests(unittest.TestCase):
 
-    def run_update(self, versions, results):
-        installs = []
+    def run_update(self, versions, results, codes=(0, 0)):
+        installs, codes = [], list(codes)
         with mock.patch.dict("os.environ", {"PODNOTE_YTDLP": __file__}), \
-                mock.patch.object(ytdlp_update, "pip", lambda program, *a: installs.append(a[-1]) or mock.Mock(returncode=0)), \
+                mock.patch.object(ytdlp_update, "pip", lambda program, *a: installs.append(a[-1]) or mock.Mock(returncode=codes.pop(0))), \
                 mock.patch.object(ytdlp_update, "version", side_effect=versions), \
                 mock.patch.object(ytdlp_update, "smoke_test", side_effect=results), \
                 mock.patch("builtins.print") as said:
@@ -24,9 +24,15 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((0, ["yt-dlp[default]"], ""), self.run_update(["2026.10.26", "2026.11.02"], [""]))
 
     def test_a_failing_upgrade_is_rolled_back(self):
-        code, installs, said = self.run_update(["2026.10.26", "2026.11.02"], ["bot check", ""])
+        code, installs, said = self.run_update(["2026.10.26", "2026.11.02", "2026.10.26"], ["bot check", ""])
         self.assertEqual((1, ["yt-dlp[default]", "yt-dlp[default]==2026.10.26"]), (code, installs))
         self.assertIn("put 2026.10.26 back, which passes it", said)
+
+    def test_a_failed_rollback_is_not_reported_as_done(self):
+        code, installs, said = self.run_update(["2026.10.26", "2026.11.02", "2026.11.02"], ["bot check", ""], codes=(0, 1))
+        self.assertEqual(1, code)
+        self.assertIn("putting 2026.10.26 back failed too (now 2026.11.02)", said)
+        self.assertNotIn("which passes it", said)
 
     def test_no_newer_release_is_reported_not_rolled_back(self):
         code, installs, said = self.run_update(["2026.10.26", "2026.10.26"], ["nsig"])

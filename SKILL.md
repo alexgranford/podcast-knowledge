@@ -1,7 +1,7 @@
 ---
 name: podcast-knowledge
 description: Use when the user sends an Apple Podcasts or YouTube episode link, a show to follow, or a title search, and wants a knowledge note in Markdown (for example in an Obsidian vault), in the episode's own language.
-version: 6.0.0
+version: 6.0.1
 required_environment_variables:
   - name: OMLX_BASE_URL
     prompt: Address of the model server (oMLX or any OpenAI-compatible server), e.g. http://<host>:8000
@@ -136,8 +136,9 @@ use the admin's named-person commands below rather than claiming the member must
   shows they follow and the episodes they asked for: asking for one already queued adds them to it, and
   for one already made sends its message at once, neither counting toward the daily limit. The admin is
   told of each of these.
-- **Changing a show** (hosts, YouTube links, language) and managing people is the admin's. A script refuses
-  anyone else with one line: pass it on as it is.
+- **Changing a show** (hosts, YouTube links, language), managing people, running the queue worker or the
+  show monitor by hand and reading the weekly digest are the admin's. A script refuses anyone else with
+  one line: pass it on as it is.
 - Someone new is added the first time they ask for something; nothing to do.
 
 The admin manages people (reply with the line it prints):

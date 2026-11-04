@@ -643,7 +643,8 @@ def assignment(text: str) -> tuple[str, str]:
     return what.strip(), value.strip()
 
 
-ADMIN_ONLY = {"hosts", "cohost", "not-host", "refresh", "link", "unlink", "link-wikidata", "language", "priority"}
+ADMIN_ONLY = {"hosts", "cohost", "not-host", "refresh", "link", "unlink", "link-wikidata", "language", "priority",
+              "digest"}                         # the digest is the admin's weekly summary: reading it marks it read
 
 
 class Asker:
@@ -842,8 +843,8 @@ def main() -> int:
             print(message)
         return 0
     message = registry_command(command, text, asker)
-    render()
-    asker.send()                                        # only now: the change is saved
+    asker.send()                                        # only now: the change is saved (before the table is
+    render()                                            # redrawn, so a failed redraw loses no notice)
     print(message)
     return 0
 

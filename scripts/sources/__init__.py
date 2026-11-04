@@ -187,8 +187,11 @@ def match(a: dict, b: dict, show_title: str = "") -> str:
     "time":  the same show from two different sources, published at exact times within CLOSE_WINDOW,
              with similar lengths: a show that titles its YouTube uploads its own way.
     "":      not one episode. Two copies from one source are never matched on time alone: a show may
-             release two episodes in one minute."""
+             release two episodes in one minute. Two records of one source with different ids (`id`, the
+             source's episode id, when a record carries it) are two episodes, whatever their titles."""
     if not (a.get("show") and a.get("show") == b.get("show")):
+        return ""
+    if a.get("source") and a.get("source") == b.get("source") and a.get("id") and b.get("id") and a["id"] != b["id"]:
         return ""
     when_a, when_b = instant(a.get("published", "")), instant(b.get("published", ""))
     if not (when_a and when_b):
@@ -204,13 +207,13 @@ def match(a: dict, b: dict, show_title: str = "") -> str:
 
 
 def twin_among(record: dict, candidates: list[tuple], show_title: str = ""):
-    """The key of the candidate (key, record) that is the same episode: one with the same title first,
-    else the only one close in time and length. Two such and neither is taken: the episode is made, so
-    the price of a doubt is a second note, never a lost episode."""
+    """The key of the only candidate (key, record) that is the same episode: by title, else by time and
+    length. Two candidates of one kind and neither is taken: the episode is made. A doubt costs a
+    second note. A lost episode would cost more."""
     kinds = [(key, match(record, other, show_title)) for key, other in candidates]
     titled = [key for key, kind in kinds if kind == "title"]
     timed = [key for key, kind in kinds if kind == "time"]
-    return titled[0] if titled else timed[0] if len(timed) == 1 else None
+    return titled[0] if len(titled) == 1 else None if titled else timed[0] if len(timed) == 1 else None
 
 
 def note_records(folder: Path, show: str, other_than: str = "") -> list[tuple[Path, dict]]:

@@ -90,6 +90,17 @@ class MonitorTests(MonitorFixture):
         self.assertEqual("", self.check())                                # already seen: nothing new
         self.assertEqual(2, len(self.queue()))
 
+    def test_an_empty_feed_at_first_sight_is_not_read_as_an_empty_catalogue(self):
+        self.feed = []                                                    # a feed served empty for a moment
+        self.check()
+        state = json.loads((self.state / "monitor-state.json").read_text())["1000000101"]
+        self.assertNotIn("initialised", state)
+        self.assertIn("lists no episodes", state["last_error"])
+        self.feed = [episode(f"old-{n}") for n in range(3)]               # back in full: still back catalogue
+        self.apple = {f"old-{n}": f"https://podcasts.apple.com/gb/podcast/id1000000101?i=100000000001{n}" for n in range(3)}
+        self.check()
+        self.assertEqual([], self.queue())
+
     def test_trailers_are_skipped(self):
         self.check()
         self.feed = [episode("teaser", duration="00:02:30")] + self.feed

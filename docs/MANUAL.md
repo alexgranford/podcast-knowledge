@@ -64,7 +64,7 @@ podnote makes one episode per run. Hermes cron jobs, in script mode (no model, n
 **How it behaves:**
 
 - **One change, one transaction** — admitting an episode and recording who asked is one commit (the daily limit counts it at once); finishing an episode and writing its messages is another (a crash cannot lose them).
-- **Messages** — sent after the commit, one at a time; a failed or cut-off send is tried again after 5, 15, 60 and 180 minutes, then given up. An occasional duplicate is accepted; a lost message is not. The admin's own copy is the queue job's output.
+- **Messages** — sent after the commit, one at a time; a failed or cut-off send is tried again after 5, 15, 60 and 180 minutes, then given up. An occasional duplicate is accepted; a lost message is not. The admin's copy of a finished note goes the same way. Without a delivery address for the admin, it is the queue job's output.
 - **Retries** — a failure a later try may fix is retried 1, 3, 6 and 12 hours after the first failure, then reported:
   - Apple not listing the episode yet;
   - a server or network error;
@@ -107,6 +107,7 @@ podnote makes one episode per run. Hermes cron jobs, in script mode (no model, n
 | asks | the newest 10 and newest 100 in both storefronts, combined by track id, with a fresh address each time (Apple's CDN otherwise answers from a copy up to a day old) | — |
 | not listed yet | pending; after three days you are told once, and it stays eligible | a waiting video is looked up by id even after newer videos push it off the listings |
 | a failed read | decides nothing that check; never taken as absence | the same |
+| an empty listing | counts as a failed read: a feed served empty for a moment marks nothing as seen | the same |
 | coverage | complete: an episode the feed no longer lists is gone | bounded: absence proves nothing |
 
 **Rules both share** (`podmonitor.Watch`):
@@ -204,10 +205,11 @@ One installation can serve the admin (who owns the notes folder, the model serve
 | search a show by title | yes | yes, within the same limit |
 | finished-note messages | every note | the shows they follow and the episodes they asked for (one already made is sent at once) |
 | make, re-make or verify a note directly, pause the queue | yes | no: their links go through the queue |
+| run the queue worker or the show monitor, read the weekly digest | yes (and cron) | no |
 | failures | all | the episodes they asked for |
 | hosts, YouTube links, show language, people | yes | no |
 
-- **Who is asking** — from the session Hermes gives each command (`HERMES_SESSION_PLATFORM`, `HERMES_SESSION_USER_ID`); no session (a shell, a cron job) means the admin. The agent is the trust boundary: members should be people you trust.
+- **Who is asking** — from the session Hermes gives each command (`HERMES_SESSION_PLATFORM`, `HERMES_SESSION_USER_ID`); no session (a shell, a cron job) means the admin. A chat session that does not say who is asking gets nothing done. A `users.json` that cannot be read is never written over. The agent is the trust boundary: members should be people you trust.
 - **People** — kept by name in `PODNOTE_STATE/users.json`; managed with `podusers.py` (`list`, `rename`, `block`, `allow`, `limit`, `identity`) or through the agent. A newcomer becomes a member on their first request, and the admin is told.
 - **Following** — a show is monitored while it has a follower; the admin can subscribe others (`podshows.py follow <show> = <person>, …`), who are told in their own chat.
 - **Delivery** — one message at a time, a few seconds apart on WhatsApp.
@@ -322,7 +324,7 @@ Automatic transcription has no speaker labels, so attribution comes from the tex
 | --- | --- |
 | by title | the same show; the same title once case, punctuation and the show's name are set aside; publish times within 48 hours. Equal titles only: "Part 1" and "Part 2" stay two episodes |
 | by time (a show that titles its YouTube uploads its own way) | copies from two different sources; exact publish times within 10 minutes; lengths within the larger of 2 minutes or 10%; only one such candidate |
-| never | two copies from one source by time alone (a show may release two episodes at once); two candidates (in doubt, both are made: a second note costs less than a lost episode) |
+| never | two copies from one source by time alone (a show may release two episodes at once); two copies from one source with different ids; two candidates of one kind (in doubt, both are made: a second note costs less than a lost episode) |
 | override | `podqueue.py add <link> --force` |
 
 ### Languages
@@ -477,7 +479,7 @@ erDiagram
 | `seen` | episode GUIDs or video ids already handled |
 | `pending` | episodes found but not yet resolvable, with when they were first seen |
 | `held` | copies waiting for a higher-priority source: `{since, peek}` (an older entry may hold only the time) |
-| `tabs` | the YouTube lists read so far (`playlist`, `videos`, `streams`); a new one starts as back catalogue |
+| `tabs` | the YouTube lists read so far (`playlist`, `videos`, `streams`); a new one starts as back catalogue, except videos released since `initialised` |
 | `initialised` | when the back catalogue was marked as seen |
 | `last_error` | the last failure reading the source, or the queue's answer for an episode it did not take |
 | `last_attempt`, `last_success`, `failing_since` | when the source was last tried and last read, and since when it has not been |

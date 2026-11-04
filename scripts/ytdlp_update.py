@@ -69,7 +69,12 @@ def main() -> int:
         print(f"yt-dlp {after} fails the YouTube test ({problem}); no newer release yet. YouTube episodes "
               "will fail until one fixes it.")
         return 1
-    pip(program, "install", "--quiet", f"yt-dlp[default]=={before}")
+    back = pip(program, "install", "--quiet", f"yt-dlp[default]=={before}")
+    restored = version(program)
+    if back.returncode or restored != before:
+        print(f"yt-dlp {after} failed the YouTube test ({problem}); putting {before} back failed too (now "
+              f"{restored or 'unknown'}). YouTube episodes will fail until yt-dlp is fixed by hand.")
+        return 1
     again = smoke_test()
     print(f"yt-dlp {after} failed the YouTube test ({problem}); put {before} back" +
           (", which passes it." if not again else f", which fails it too ({again})."))

@@ -49,6 +49,13 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(result.match_method, "apple_episode_url")
 
 
+    def test_a_guid_shared_by_two_entries_is_settled_by_the_audio(self):
+        episodes = [podfetch.Episode(guid="same", title="A", enclosure_url="https://audio.example/a.mp3"),
+                    podfetch.Episode(guid="same", title="B", enclosure_url="https://audio.example/b.mp3")]
+        result = podfetch.match_episode(episodes, guid="same", enclosure_url="https://audio.example/b.mp3")
+        self.assertEqual("B", result.title)
+        self.assertIsNone(podfetch.match_episode(episodes, guid="same"))      # nothing else to tell them apart
+
     def test_new_episode_retries_once_without_stale_conditional_feed_cache(self):
         stale = b"""<rss><channel><title>Fixture</title><item>
         <title>Completely unrelated briefing</title><guid>old</guid>
