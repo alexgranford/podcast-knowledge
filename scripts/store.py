@@ -13,6 +13,7 @@ called inside it joins it. Nothing slow (a lookup, a model run, a send) happens 
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
@@ -54,9 +55,11 @@ def _connect() -> sqlite3.Connection:
         os.close(os.open(path(), os.O_CREAT | os.O_WRONLY, 0o600))   # files the database file's mode
     db = sqlite3.connect(path(), timeout=60, isolation_level=None)
     db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
+    with (STATE / "app.lock").open("a+") as lock:       # one connection at a time sets up a new store: two
+        fcntl.flock(lock, fcntl.LOCK_EX)                # switching it to WAL at once can fail "locked"
+        db.execute("PRAGMA journal_mode=WAL")
+        db.executescript(SCHEMA)
     db.execute("PRAGMA synchronous=FULL")
-    db.executescript(SCHEMA)
     for private in (path(), path().with_name(path().name + "-wal"), path().with_name(path().name + "-shm")):
         if private.exists():                             # it names people and holds their messages
             os.chmod(private, 0o600)
@@ -71,18 +74,26 @@ def transaction():
         yield current
         return
     db = _connect()
-    _local.db, _local.path = db, path()
+    _local.db, _local.path, _local.after = db, path(), []
     try:
         db.execute("BEGIN IMMEDIATE")
         yield db
         db.execute("COMMIT")
+        for step in _local.after:
+            step()
     except BaseException:
         if db.in_transaction:
             db.execute("ROLLBACK")
         raise
     finally:
-        _local.db = _local.path = None
+        _local.db = _local.path = _local.after = None
         db.close()
+
+
+def after_commit(step) -> None:
+    """Do step (a file outside the store: a log line) once the current transaction has committed, and
+    never if it rolls back."""
+    _local.after.append(step)
 
 
 # ---- jobs

@@ -15,6 +15,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/alexgranford/podcast-knowledge/actions/workflows/tests.yml"><img src="https://github.com/alexgranford/podcast-knowledge/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
+</p>
+
+<p align="center">
   <a href="#key-features">Key features</a> ·
   <a href="#new-in-60">New in 6.0</a> ·
   <a href="#what-it-looks-like">What it looks like</a> ·
@@ -42,17 +46,17 @@ Tested on a 24 GB Apple Silicon Mac. Other hardware and models can work; see [Mo
 
 | | |
 | --- | --- |
-| 🏠 **Private by design**<br>Speech recognition and writing run on your own model server. No audio or transcript leaves your network. | 📚 **Knowledge that accumulates**<br>One note per episode, one folder per show, a table of every episode for Obsidian, and a show registry that learns each show's hosts. |
-| 🔔 **Never miss a release**<br>Follow a show and its new episodes are picked up from Apple and YouTube, made once, and sent to you. | 🎯 **The point in a minute**<br>A one-line take, a short summary and the key themes, each point credited to whoever made it. |
-| ✅ **Checked against sources**<br>Claims are checked against Wikipedia, Wikidata, OpenAlex and web search, and only cited evidence gives a verdict. Books, ideas and quotes are linked and matched. | 🌍 **Any language**<br>The note is written in the episode's own language, and an unclear language is asked about rather than guessed. |
-| 👪 **Share with family and friends**<br>People you let in follow shows and queue episodes from their own chat. You keep control of shows and people. | 🛡️ **Runs itself**<br>Long episodes resume, failures are retried, and a crash loses no note or message. A health check flags a source gone quiet. |
+| 🏠 **Private by design**<br>Speech recognition and writing run on your own model server. Audio and transcripts stay on your network unless you choose a hosted text model. | 📚 **Knowledge that accumulates**<br>One note per episode, one folder per show, a table of every episode for Obsidian, and a show registry that learns each show's hosts. |
+| 🔔 **New releases come to you**<br>Follow a show and its new episodes are picked up from Apple and YouTube, made once and sent to you. | 🎯 **The point in a minute**<br>A one-line take, a short summary and the key themes, each point credited to whoever made it. |
+| ✅ **Checked against sources**<br>Claims are checked against Wikipedia, Wikidata, OpenAlex and web search, and only cited evidence gives a verdict. Books, ideas and quotes are linked and matched. | 🌍 **In the episode's language**<br>The note is written in the language spoken, as far as your models support it. An unclear language is asked about rather than guessed. |
+| 👪 **Share with family and friends**<br>People you let in follow shows and queue episodes from their own chat. You keep control of shows and people. | 🛡️ **Runs itself**<br>Long episodes resume and failures are retried. The queue and the messages still to send survive a crash. A health check flags a source gone quiet. |
 
 ## New in 6.0
 
 - **YouTube** joins Apple Podcasts. A podcast can have both, with priorities, and each episode is made once.
 - **Every episode in its own language**, from speech recognition to the finished note.
 - **Several people** on one installation, each with their own shows and messages.
-- **Crash-safe bookkeeping**, so a queued episode or a message is never lost.
+- **Crash-safe bookkeeping** for the queue and the messages still to send.
 - **Health at a glance**, plus a check after every Hermes upgrade.
 
 [All the changes ↓](#whats-new-in-60)
@@ -311,6 +315,7 @@ Run these on the machine that will run the scripts.
 
    ```bash
    git clone https://github.com/alexgranford/podcast-knowledge.git && cd podcast-knowledge
+   python3 -m venv .venv && . .venv/bin/activate   # its own Python packages; run the scripts with this venv
    python3 -m pip install -r requirements.txt
    ffmpeg -version                                # must work; install ffmpeg first if it does not
    ```
@@ -322,8 +327,9 @@ Run these on the machine that will run the scripts.
 3. **Settings** (see [Configuration](docs/MANUAL.md#configuration); under Hermes they go in Hermes's own `.env` instead).
 
    ```bash
-   cp .env.example .env && chmod 600 .env
-   cp names.example.txt "$PODNOTE_STATE/names.txt"   # optional: your own fixes for misheard names
+   cp .env.example .env && chmod 600 .env          # then set PODNOTE_ROOT, PODNOTE_STATE and the model server in it
+   mkdir -p /var/tmp/podnote-state                 # the folder you set as PODNOTE_STATE
+   cp names.example.txt /var/tmp/podnote-state/names.txt   # optional: your own fixes for misheard names
    ```
 
 4. **Speech-detection runtime:** `python3 scripts/setup_vad.py`.
@@ -337,7 +343,7 @@ Run these on the machine that will run the scripts.
    # .env: PODNOTE_YTDLP=/path/to/yt-dlp/bin/yt-dlp
    ```
 
-6. **Run the tests** before the first episode (see [Testing and validation](docs/MANUAL.md#testing-and-validation)).
+6. **Run the tests** before the first episode: `python3 -m pip install -r requirements-dev.txt && python3 -m pytest -q tests` (see [Testing and validation](docs/MANUAL.md#testing-and-validation)).
 
 ### Running under Hermes
 
@@ -447,8 +453,9 @@ With the model server running and the settings filled in:
 ## More
 
 - **[Manual](docs/MANUAL.md):** commands, configuration, models, how each part works, data definitions, limitations and troubleshooting.
-- **Questions, problems, tested set-ups:** open a GitHub issue.
+- **[Changelog](CHANGELOG.md):** every release since 6.0.
+- **Questions, problems, tested set-ups:** open a GitHub issue. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). For security problems, see [SECURITY.md](SECURITY.md).
 
 ## Licence
 
-MIT; see [`LICENSE`](LICENSE). The bundled Silero VAD model is MIT-licensed by the Silero Team.
+MIT; see [`LICENSE`](LICENSE). The bundled Silero VAD model is MIT-licensed by the Silero Team; its licence is [`assets/silero-vad/6.2.1/LICENSE`](assets/silero-vad/6.2.1/LICENSE).

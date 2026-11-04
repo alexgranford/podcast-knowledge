@@ -272,7 +272,7 @@ def admit(url: str, source: str = "", peek: dict | None = None, language: str | 
     if peek is None and source != "monitor":
         peek = lookup_peek(ref, said)
     if peek:
-        peek = {**peek, "source": ref.source}           # this link's own source, whoever built the peek
+        peek = {**peek, "source": ref.source, "id": ref.episode}   # this link's own source and id, whoever built it
     episode = ref.job_id
     answer, wanted, made = "", "", None                 # wanted: the queued link the asker joins; made: its note
     with queue_db() as db:
@@ -352,7 +352,7 @@ def what_episode(ref: sources.Ref, peek: dict | None) -> str:
 
 def recipients(due: str, entry: dict) -> list[str]:
     """Who besides the admin gets a finished episode's message: everyone who asked for it, then the
-    show's followers; the admin is left out (the queue job's own output reaches them)."""
+    show's followers; the admin is left out (tick queues their copy itself, or prints it)."""
     import podnote
     keys = users.requesters(due)
     try:
@@ -409,7 +409,7 @@ def twin(peek: dict | None, queue: list[str], state: dict) -> Path | str:
         except ValueError:
             continue
         if (ref.source, ref.episode) not in made:
-            queued.append((line, {**(state.get(line, {}).get("peek") or {}), "source": ref.source}))
+            queued.append((line, {**(state.get(line, {}).get("peek") or {}), "source": ref.source, "id": ref.episode}))
     return sources.twin_among(peek, notes + queued, show.get("title", "")) or ""
 
 
@@ -425,6 +425,12 @@ def episode_id_or_none(url: str) -> str | None:
         return episode_id(url)
     except ValueError:
         return None
+
+
+def log_done(line: str) -> None:
+    """A line for done.txt, written once the finishing transaction commits: a rolled-back finish (the
+    export failed) logs nothing, so its retry does not log the episode twice."""
+    store.after_commit(lambda: append_line(STATE / "done.txt", line))
 
 
 def finish(url: str, queue: list[str], state: dict) -> None:
@@ -718,7 +724,8 @@ def clean_cache(queue: list[str], today: datetime | None = None) -> str:
 
 def run() -> str:
     """Process the next due link. Returns the admin's message (the cron job's output), or "" for nothing
-    to report. Messages to members are sent after its transaction is committed (deliver)."""
+    to report. Messages are sent after its transaction is committed (deliver): the members', and a
+    finished note's for an admin with a delivery address."""
     try:
         return tick()
     finally:
@@ -769,14 +776,18 @@ def tick() -> str:
                 return ""
             entry = state.setdefault(due, {"added": iso(now()), "source": "manual", "attempts": 0})
             if note:                                    # complete or partial: delivered either way
-                append_line(STATE / "done.txt", f"{iso(now())}\t{due}\t{status.split(' ')[0] or 'complete'}\t{note}")
+                log_done(f"{iso(now())}\t{due}\t{status.split(' ')[0] or 'complete'}\t{note}")
                 finish(due, queue, state)
                 message = note_message(due, note_path)
                 for key in recipients(due, entry):             # members: everyone who asked, the show's followers
                     store.send_later(db, key, message)
+                admin, person = users.admin()
+                if person.get("deliver"):                       # the admin's copy too, kept until it is sent;
+                    store.send_later(db, admin, message)        # a set-up without one prints it (cron output)
+                    return ""
                 return message
             if "EXISTS" in found:                       # made already (found only now): those who asked get it
-                append_line(STATE / "done.txt", f"{iso(now())}\t{due}\talready-in-library\t")
+                log_done(f"{iso(now())}\t{due}\talready-in-library\t")
                 existing = found["EXISTS"]
                 askers = users.requesters(due)
                 finish(due, queue, state)
@@ -886,8 +897,8 @@ def main() -> int:
     moving.add_argument("to", type=int)
     sub.add_parser("export", help="write the store back as the files of before, for a rollback (admin)")
     args = parser.parse_args()
-    if args.command in ("remove", "move", "export"):
-        refused = users.admin_only("change the queue by hand")
+    if args.command in ("remove", "move", "export", "run", None):   # run, or none: the worker (the cron job)
+        refused = users.admin_only("run the queue" if args.command in ("run", None) else "change the queue by hand")
         if refused:
             print(refused)
             return 1

@@ -1041,7 +1041,7 @@ def twin_of(metadata: dict) -> Path | None:
     folder = ROOT / EPISODES / ((entry or {}).get("folder") or podshows.folder_name(str(metadata.get("show", ""))))
     record = sources.episode(key or "this show", ref.source, str(metadata.get("episode") or ""),
                              str(metadata.get("published_utc") or metadata.get("published") or ""),
-                             metadata.get("duration_seconds") or 0)
+                             metadata.get("duration_seconds") or 0, id=ref.episode)
     return sources.twin_note(folder, record, str(metadata.get("show") or ""), other_than=ref.id_field)
 
 

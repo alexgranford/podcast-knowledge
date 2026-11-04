@@ -277,6 +277,8 @@ def check_apple(show: str, country: str, state: dict, messages: list[str]) -> Wa
     watch = Watch(state.setdefault(show, {"seen": [], "pending": {}}), COMPLETE)
     try:
         episodes = feed_episodes(show, country)
+        if not episodes:                            # an empty feed proves nothing: read as nothing seen,
+            raise LookupError("the feed lists no episodes")   # the next full read would queue it all
     except Exception as error:                      # a feed down today is checked again next time
         watch.failed(error)
         return watch
@@ -311,6 +313,8 @@ def check_apple(show: str, country: str, state: dict, messages: list[str]) -> Wa
             watch.done(episode.guid)
             continue
         peek = sources.apple.peek_from_feed(episode, show, FEED_LANGUAGE.get(show, ""))
+        if episode.guid in links:                   # its Apple id: another Apple episode of the same title is not it
+            peek["id"] = sources.parse(links[episode.guid]).episode
         if made_elsewhere(peek):                    # pending, held or new: nothing left to wait for
             watch.done(episode.guid)
             continue
@@ -364,6 +368,8 @@ def check_youtube(show: str, state: dict, messages: list[str] | None = None) -> 
     entry = watch.entry
     try:
         videos = youtube.recent_videos(linked["channel"], linked.get("playlist") or "")
+        if not videos:                              # an empty listing proves nothing (see check_apple)
+            raise LookupError("YouTube lists no videos")
     except Exception as error:                      # YouTube or yt-dlp down today: checked again next time
         watch.failed(error)
         return watch
@@ -378,9 +384,14 @@ def check_youtube(show: str, state: dict, messages: list[str] | None = None) -> 
         if not watch.first_read([video["id"] for video in videos], fresh):
             return watch
     known = set(entry.get("tabs", []))
-    if tabs - known:                                # a tab read for the first time (a channel's Streams):
-        entry["seen"] += [v["id"] for v in videos if v.get("tab") in tabs - known and v["id"] not in entry["seen"]]
-        entry["tabs"] = sorted(known | tabs)        # what it holds already is its back catalogue
+    if tabs - known:                                # a tab read for the first time (a channel's Streams, or one
+        first = [v for v in videos if v.get("tab") in tabs - known and v["id"] not in entry["seen"]]   # unreadable
+        fresh = released_since(first, entry["initialised"]) if first else set()   # before): its back catalogue,
+        if fresh is None:                           # except what came out since the watch began. YouTube will
+            videos = [v for v in videos if v not in first]          # not say yet: the new tab waits a pass
+        else:
+            entry["seen"] += [v["id"] for v in first if v["id"] not in fresh]
+            entry["tabs"] = sorted(known | tabs)
     waits = podshows.outranked(show, registered, "youtube")         # another source comes first: wait for it
     seen, held = watch.seen, watch.held
     listed = {video["id"] for video in videos}
@@ -413,7 +424,7 @@ def check_youtube(show: str, state: dict, messages: list[str] | None = None) -> 
         if float(info.get("duration") or 0) < MIN_SECONDS:
             watch.done(key)
             continue
-        peek = youtube.peek_from_info(info, show, video["title"])
+        peek = {**youtube.peek_from_info(info, show, video["title"]), "id": key}
         if waits:
             watch.hold(key, peek)
             if not watch.wait_over(key, peek, waits):
@@ -446,6 +457,11 @@ def released_since(videos: list[dict], since: str) -> set[str] | None:
 
 
 def main() -> int:
+    import users
+    refused = users.admin_only("run the show monitor")    # the cron job's, or the admin's by hand
+    if refused:
+        print(refused)
+        return 1
     message = check()
     if message:
         print(message)

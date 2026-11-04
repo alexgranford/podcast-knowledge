@@ -7,12 +7,15 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]      # the oldest the README promises, and a current one
     steps:
       - uses: actions/checkout@v4
       - run: echo "PODNOTE_VAD_RUNTIME=$RUNNER_TEMP/vad-runtime" >> "$GITHUB_ENV"   # built below, so the transcription tests run too
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: python -m pip install -r requirements-dev.txt
       - run: python scripts/setup_vad.py
