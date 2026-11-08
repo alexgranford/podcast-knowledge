@@ -4,6 +4,21 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-11-08
+
+### Changed
+
+- **Speech recognition is told the episode's names only.** Each window's context is now the hosts', guests' and organisations' names, separated by spaces. The labels, titles and description it carried before are gone.
+  - Guests and organisations come from the show notes only when the title names them too or the notes do twice. Chapter headings, sponsor copy, links and a phrase named once are left out.
+  - With no reliable name, a window is sent without context.
+- **One retry, without context.** A window whose answer reads the names out first, is too short or mostly repeats them is transcribed once more without context. The second, shorter context is gone.
+- **Read-out check.** It looks for the context said word for word at the start of the answer. Speech naming the same people in its own words is kept.
+
+### Why
+
+- With the earlier context, about a quarter of windows were read back and needed up to three requests.
+- On a 10-window comparison, names only fixed a few spellings, made one worse, and left most text as it was without context. Existing transcripts are not redone.
+
 ## [6.0.1] - 2026-11-04
 
 ### Fixed
@@ -33,6 +48,7 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 YouTube as a second source, every episode in its own language, several people on one installation, and crash-safe bookkeeping. See [What's new in 6.0](README.md#whats-new-in-60).
 
-[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.1...HEAD
+[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/alexgranford/podcast-knowledge/releases/tag/v6.0.0

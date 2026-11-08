@@ -5,6 +5,7 @@ two sources (queue, library, podnote, monitor). No network: yt-dlp and the downl
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -470,6 +471,33 @@ class TwinEpisodeTests(TwinFixture):
                 mock.patch.object(youtube, "fetch_audio", side_effect=RuntimeError("downloading")), \
                 self.assertRaisesRegex(RuntimeError, "downloading"):
             podnote.front_half(f"https://youtu.be/{VIDEO}", twin_check=True)
+
+    def test_the_transcription_step_sends_only_the_episodes_names(self):
+        record = {"source_url": f"https://www.youtube.com/watch?v={VIDEO}", "youtube_video_id": VIDEO, "show": "Harbour Talk",
+                  "episode": "Why the Tide Will Turn – Sam Rivers", "published": "2026-10-31", "duration_seconds": 6016,
+                  "episode_description": "Sam Rivers joins us to talk tides. https://promo.example Learn More at the shop."}
+        credits = {"show_author": "Harbour Talk", "youtube_channel_id": CHANNEL, "published_utc": "2026-10-31T19:00:08"}
+        seen = []
+
+        class Runner:                                             # stands in for the ASR: records what it is given
+            def __init__(self, *args, **kwargs):
+                seen.append(kwargs)
+
+            def run_all(self):
+                raise RuntimeError("stop after the hand-over")
+
+        def fetch(ref, metadata, metadata_path, audio, log, cache):
+            audio.parent.mkdir(parents=True, exist_ok=True)
+            audio.write_bytes(b"audio")
+
+        for description, expected in ((record["episode_description"], ["Sam Rivers"]), ("A chat about tides.", [""])):
+            shutil.rmtree(Path(podnote.CACHE) / "jobs", ignore_errors=True)
+            with mock.patch.object(youtube, "resolve", return_value=({**record, "episode_description": description}, credits)), \
+                    mock.patch.object(youtube, "fetch_audio", fetch), \
+                    mock.patch("podcast_transcription.TranscriptionRunner", Runner), mock.patch("podcast_state.PodcastStore"), \
+                    mock.patch.object(podnote, "log"), self.assertRaisesRegex(RuntimeError, "hand-over"):
+                podnote.front_half(f"https://youtu.be/{VIDEO}")
+            self.assertEqual(expected, seen[-1]["asr_prompt"])          # names only, or nothing to send
 
     def test_the_youtube_note_names_its_source(self):
         root = Path(podnote.CACHE) / "jobs" / f"youtube-{VIDEO}"

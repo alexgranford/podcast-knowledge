@@ -129,20 +129,27 @@ def default_request_runner(window_audio: Path, raw_output: Path, model: str,
     return json.loads(raw_output.read_text(encoding="utf-8"))
 
 
-HINT_HEAD = 8                          # words of the hint's own frame ("Podcast: X. Hosts: Y. Names: …")
+ECHO_HEAD = 8                          # the context's first words that, read out at the start, mark an echo
+ECHO_MIN = 4                           # a shorter context (one name) proves nothing by being said first
+ECHO_SLACK = 3                         # words of speech ("um", "so") the echo may come after
 
 
 def hint_failure(raw: dict[str, Any], window: dict[str, Any], hint: str) -> str:
-    """Why a window transcribed with a name hint cannot be kept ("" when it can). Qwen3-ASR can
-    answer a hint with the hint itself and drop the speech (a 14-minute window came back as 14
-    words); the coverage check does not see it, because the single segment still spans the window.
-    More often it reads the hint out first and then the speech: 96 of 823 windows over 73 of 236
-    episodes began with a 9-305 word echo, too small a share for the overlap rule. The hint's frame
-    (its first words: "Podcast: <show>. Hosts: …") is never spoken, so it alone marks the echo."""
+    """Why a window transcribed with a context cannot be kept ("" when it can). The context is the
+    episode's names ("Maya Lindqvist Daniel Okafor Ruth Calder"); a window failing here is transcribed
+    again without it.
+    - Read out first: Qwen3-ASR can open its answer with the context word for word and then the speech
+      (with the earlier labelled context it did so in about a quarter of windows). Speech that names the
+      same people in its own words ("I'm Maya Lindqvist, and with me is Daniel Okafor") does not match.
+    - Too few words: it can answer with the context and drop the speech (a 14-minute window came back as
+      14 words); the coverage check does not see it, because the single segment still spans the window.
+    - Mostly the context: an answer that loops over the context's words.
+    A names list read out in the middle of the speech, or a list of one name, cannot be told from speech
+    that names those people, and is kept."""
     text = str(raw.get("text") or "") or " ".join(str(s.get("text") or "") for s in raw.get("segments") or [])
-    head = re.findall(r"\w+", hint.lower())[:HINT_HEAD]
+    head = re.findall(r"\w+", hint.lower())[:ECHO_HEAD]
     tokens = re.findall(r"\w+", text.lower())
-    if len(head) == HINT_HEAD and any(tokens[i:i + HINT_HEAD] == head for i in range(len(tokens) - HINT_HEAD + 1)):
+    if len(head) >= ECHO_MIN and any(tokens[i:i + len(head)] == head for i in range(min(ECHO_SLACK, len(tokens)) + 1)):
         return "the transcript reads the hint out"
     words = text.split()
     minutes = window["duration_ms"] / 60000
@@ -179,8 +186,8 @@ class TranscriptionRunner:
         )
         self.use_model_arbiter = request_runner is None
         self.request_runner = request_runner or default_request_runner
-        # name hints for every window (show, hosts, names, description), tried in order: the full one,
-        # then shorter ones, then none
+        # contexts for every window, tried in order, then none. The transcription step sends one: the
+        # episode's names (podnote.asr_names), or none at all
         prompts = [asr_prompt] if isinstance(asr_prompt, str) else list(asr_prompt)
         self.asr_prompts = [p.strip() for p in prompts if p and p.strip()]
         # the episode's language (code), and the name the speech model is told ("English"; "" = not told):
@@ -426,10 +433,10 @@ class TranscriptionRunner:
 
     def _request_with_hint(self, window_audio: Path, raw_path: Path, window: dict[str, Any],
                            base_url: str | None) -> tuple[dict[str, Any], str]:
-        """One window with the name hints in turn: a hinted answer that fails hint_failure() is retried
-        with the next, shorter hint, and finally without one (Qwen3-ASR sometimes reads a hint back
-        instead of the speech, and which hint length does it differs from window to window).
-        Returns (raw response, hint status)."""
+        """One window with each context in turn (the transcription step gives one: the episode's names),
+        then without one: an answer that fails hint_failure() is asked for again with the next. Returns
+        (raw response, status): "used", "used (shorter hint)" (an earlier version's second context; kept so
+        old records read), "dropped: <why>", or "none" when there was no context."""
         problems = []
         for index, prompt in enumerate(self.asr_prompts):
             raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, prompt=prompt, **self.asr_language)

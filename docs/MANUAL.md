@@ -26,12 +26,21 @@ scripts/podnote.py "<url>" --force --retranscribe       # transcribe again (the 
 | `RETRY: later` | that stop is one a later try may fix |
 | `EXISTS: <note>` | the episode already has this note |
 
-**Name hints:**
+**Names context:**
 
-- **What is sent** — every speech window carries the show, its hosts, the names in the title and description, and the cleaned description.
-- **Effect** — "Siobhan", "Niamh" and "Maya" come out right instead of "Shivon", "Neeve" and "Maia".
-- **Hint read back** — Qwen3-ASR sometimes returns the hint instead of the speech, or before it (about 1 window in 9 on a 236-episode check); the window is transcribed again with a shorter hint, then without one.
-- **Record** — each accepted window keeps `asr_hint`: `used`, `used (shorter hint)`, `dropped: <why>` or `none`.
+- **What is sent** — each speech window carries the episode's names and nothing else, separated by spaces (`Maya Lindqvist Daniel Okafor Ruth Calder`):
+  - the hosts (registry, `names.txt` or the feed), when they look like people: a show or publisher is not a host;
+  - people the episode's own credits name;
+  - guests and organisations the show notes name, when the title names them too or the notes do twice.
+- **Left out** — labels, the show and episode titles, the description, links, sponsor copy, chapter headings and a capitalised phrase named once. With no reliable name, the window is sent without context.
+- **Why names only** — the earlier context (show, hosts, title and description) was read back into the transcript in about a quarter of windows, and each such window took up to three requests.
+- **Effect** — it can fix a rare name's spelling ("Maia" → "Maya"). It can also change a name that was right: a comparison of 10 windows found a few spellings fixed, one made worse, and most text the same as without context.
+- **Read back** — a window whose answer opens with the names word for word, has too few words for its length, or mostly repeats the context is transcribed once more without context.
+- **Limits:**
+  - a names list read out mid-speech, or a context of one name, cannot be told from speech naming those people, and is kept;
+  - an answer looping over the names in another order is caught only when it is also too short;
+  - another proper name the notes stress (a place, a product, a book) can be included.
+- **Record** — each accepted window keeps `asr_hint`: `used`, `dropped: <why>` or `none`; records from before 6.1 can also hold `used (shorter hint)`.
 
 **Caches:**
 
@@ -257,7 +266,7 @@ One installation can serve the admin (who owns the notes folder, the model serve
 - **QAT over the plain 4-bit build** — on a six-episode comparison, about 1–2 garbled words against 6, and more of each episode kept in its themes, for about 30% more time.
 - **Mixture of experts over a dense 9B** — about five times faster, and more reliable at attributing arguments; a 12B Gemma also worked.
 - **Sampling** — Gemma's own defaults (temperature 1.0, top_p 0.95, top_k 64); no presence or frequency penalty, which mangled repeated words; thinking off, which took about five times as long for no clear gain. The comment in `podnote.ask()` records each alternative.
-- **The 1.7B speech model** — leaves the memory to the text model, spells names well with hints, and takes the episode's language.
+- **The 1.7B speech model** — leaves the memory to the text model, spells names well when told them, and takes the episode's language.
 
 ## How it works
 
@@ -306,7 +315,7 @@ Automatic transcription has no speaker labels, so attribution comes from the tex
   - every range checked (status, `Content-Range`, running size), and the finished file against the stream's exact size;
   - a redirect followed only when it is the same stream (https, another `*.googlevideo.com` server, the same `/videoplayback` path, video id, format, size and type);
   - anything else refused; the stream link is resolved again once, then the episode is retried later.
-- **Own transcript** — speech recognition with the name hints, which spell names right where YouTube's captions do not.
+- **Own transcript** — speech recognition told the episode's names, which spells them right more often than YouTube's captions.
 - **Keeping current** — the weekly `yt-dlp-update` job upgrades yt-dlp, then resolves a fixed public video and downloads its audio; a failing version is rolled back and the old one retested. A pass says YouTube works today.
 - **Errors** — retried later: a bot check, a premiere not started, a yt-dlp needing an update, an unreachable YouTube. Fails at once: private, removed, members-only, age-restricted.
 
@@ -649,7 +658,7 @@ scripts/audio_acquisition.py    bounded download with address guards (whole, or 
 scripts/ytdlp_update.py         weekly yt-dlp upgrade, download test and rollback (Hermes cron)
 scripts/podcast_vad.py          Silero VAD command line, run in its own venv
 scripts/podcast_asr.py          windowing policy and ASR merge
-scripts/podcast_transcription.py  ASR orchestration, resumable per window, hint checks
+scripts/podcast_transcription.py  ASR orchestration, resumable per window, names-context checks
 scripts/podcast_state.py        SQLite store for ASR progress (+ migrations/)
 scripts/model_arbiter.py        exclusive model load; the text session unloads on every exit path
 scripts/omlx_client.py          model server configuration, auth and ASR health check
