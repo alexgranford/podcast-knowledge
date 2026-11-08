@@ -233,7 +233,7 @@ flowchart TD
     add -- "language unclear" --> ask(["Ask the user<br/>which language"])
     add -- "queued, language stated" --> resolve["Resolve and download<br/>source connector"]
     resolve --> asr["Speech recognition<br/>~15-minute windows,<br/>told the language and the names"]
-    asr -- "hint read back or<br/>too few words: redo" --> asr
+    asr -- "names read back or<br/>too few words: once<br/>more without them" --> asr
     asr --> parts["Part notes<br/>~1,800 words each"]
     parts -- "wrong language: ask again" --> parts
     parts --> body["Themes, summary, tags"]

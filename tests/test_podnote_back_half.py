@@ -234,6 +234,59 @@ class FakeModel:
         return answer
 
 
+class AsrNamesTests(NamesFileTestCase):
+    """The ASR context: this episode's names, separated by spaces, and nothing else."""
+
+    STARLIGHT = "Starlight: Two Astronomers on the News"
+
+    def setUp(self):
+        self.use_names("@Starlight => Maya Lindqvist, Daniel Okafor\n")
+
+    def names(self, show=STARLIGHT, episode="Forecasts", description="", **more) -> str:
+        return podnote.asr_names({"show": show, "episode": episode, "episode_description": description, **more})
+
+    def test_hosts_then_the_guest_the_title_names(self):
+        context = self.names(episode="Forecasts with Ruth Calder",
+                             description="With Maya away, Daniel is joined by Ruth Calder. https://promo.example")
+        self.assertEqual("Maya Lindqvist Daniel Okafor Ruth Calder", context)
+        for frame in ("Podcast", "Hosts", "Names", "Episode", "Forecasts", "Starlight", "http", ":", ","):
+            self.assertNotIn(frame, context)
+
+    def test_an_organisation_named_twice_is_kept_and_a_publisher_is_not_a_host(self):
+        context = self.names(show="Harbour Notes", episode="Markets with Ines Varga", show_author="Acme's Weekly",
+                             description="Ines Varga, an economist at Northwind Capital, explains the week. "
+                                         "Later, Northwind Capital answers the critics.")
+        self.assertEqual("Ines Varga Northwind Capital", context)
+        self.assertEqual("", self.names(show="Harbour Notes", show_author="Harbour Notes",
+                                        description="Harbour Notes looks at the week."))
+
+    def test_spellings_survive_and_duplicates_go(self):
+        context = self.names(episode="Zoë O’Brien-Smith returns",
+                             description="Zoe\u0308  O’Brien\u200b-Smith returns. Анна Петрова speaks first, then "
+                                         "Ελένη Παππά. Later Анна Петрова and Ελένη Παππά answer Zoë O’Brien-Smith.")
+        self.assertEqual("Maya Lindqvist Daniel Okafor Zoë O’Brien-Smith Анна Петрова Ελένη Παππά", context)
+        self.assertEqual(1, context.count("Zoë"))
+
+    def test_clutter_never_reaches_the_context(self):
+        context = self.names(description=(
+            "Learn More at https://shop.example today. Building One of the Biggest Funds is hard. LIVE SPECIAL "
+            "tonight. 00:00 Opening Statement 05:10 Final Arguments 09:40 Opening Statement. Brought to you by "
+            "Northwind Bank – save today – https://nw.example. Northwind Bank again. <b>Ruth Calder</b> joins. "
+            "Ruth Calder answers. Rowan’s Opening Statement follows."))
+        self.assertEqual("Maya Lindqvist Daniel Okafor Ruth Calder", context)
+
+    def test_a_name_said_once_or_nothing_reliable_gives_no_context(self):
+        self.assertEqual("", self.names(show="Harbour Notes", description="A chat about tides with Ruth Calder."))
+        self.assertEqual("", self.names(show="Harbour Notes"))
+        self.assertEqual("", podnote.asr_names({}))
+
+    def test_tidy_names(self):
+        self.assertEqual("Kingsbridge-Vale University", podnote.tidy_name(" Kingsbridge-Vale  University of "))
+        self.assertEqual("", podnote.tidy_name("Visit www.example.com"))
+        self.assertEqual("", podnote.tidy_name("Vault2 Cloud"))
+        self.assertEqual("Jo B. Rivers", podnote.tidy_name("“Jo B. Rivers”"))
+
+
 class SynthesiseTests(NamesFileTestCase):
 
     def setUp(self):
@@ -416,13 +469,6 @@ class SynthesiseTests(NamesFileTestCase):
                               + "Thanks for listening. I'm Iris Fleming."}]}
         self.assertEqual(["Tomas Brandt", "Felix Moreau", "Lucas Berg", "Iris Fleming"],
                          podnote.self_introductions(chunks, "Science Hour"))
-
-    def test_asr_hint(self):
-        hint = podnote.asr_hint({"show": "Starlight: Two Astronomers on the News", "episode": "Forecasts with Ruth Calder",
-                                 "episode_description": "With Maya away, Daniel is joined by Ruth Calder. https://promo.example"})
-        self.assertTrue(hint.startswith("Podcast: Starlight: Two Astronomers on the News. Hosts: Maya Lindqvist, Daniel Okafor. "
-                                        "Names: Ruth Calder. Episode: Forecasts with Ruth Calder. With Maya away"), hint)
-        self.assertNotIn("http", hint)
 
     def test_summary_prompt_asks_for_a_quick_summary_and_substance_only(self):
         self.assertIn("the quick summary: one plain sentence", podnote.SUMMARY_PROMPT)

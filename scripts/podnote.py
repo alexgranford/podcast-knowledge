@@ -187,7 +187,7 @@ def front_half(url: str, retranscribe: bool = False, twin_check: bool = False, l
     """Resolve, download and transcribe with the existing modules, the episode's source (sources/) doing
     the resolving and the download. Skips whatever is already on disk, unless retranscribe: then the
     earlier transcript and model output are set aside in previous-<time>/ and the episode is transcribed
-    again (with today's name hint) under a fresh ASR state record, whose id is kept in asr/state-job-id
+    again (with today's names context) under a fresh ASR state record, whose id is kept in asr/state-job-id
     so an interrupted run resumes it. twin_check: stop (Twin) before any download when the show already
     has a note for this episode from another source. language: what the user says it is spoken in
     (episode_language decides, before anything is downloaded)."""
@@ -266,7 +266,7 @@ def front_half(url: str, retranscribe: bool = False, twin_check: bool = False, l
                                   artifacts=[artifact_descriptor(state_job, "source-audio-v1", "source-audio", audio)])
             store.transition_job(state_job, "transcribing", expected_revision=store.get_job(state_job)["revision"], reason="podnote")
         TranscriptionRunner(store, state_job, audio, root, model_arbiter_root=CACHE / "model-arbiter",
-                            asr_prompt=[asr_hint(metadata), asr_hint(metadata, 600)], language=spoken,
+                            asr_prompt=[asr_names(metadata)], language=spoken,
                             language_name=languages.name(spoken) if spoken in languages.ASR_LANGUAGES else "").run_all()
         artifacts = store.list_artifacts(state_job, "ordered-transcript") or store.list_artifacts(state_job, "validated-transcript")
         produced = Path(artifacts[-1]["path"])
@@ -637,23 +637,24 @@ def clean_description(raw: str, limit: int = 1500, drop: list[str] | tuple = ())
 
 NOT_NAMES = {"The", "In", "This", "On", "And", "But", "We", "Our", "Join", "Subscribe", "Follow", "Listen", "Get",
              "Support", "Watch", "Today", "For", "With", "What", "Why", "How", "Who", "When", "A", "An", "It", "If",
-             "To", "Is", "Are", "Was"}
+             "To", "Is", "Are", "Was", "They", "He", "She", "You", "I", "I'm", "My", "His", "Her", "Their", "Its",
+             "So", "Not", "No", "All", "As", "At", "By", "From", "Or", "Here", "There"}
 
 
 UPPER = "[A-ZÀ-ÖØ-ÞΑ-ΩА-ЯЁ]"          # a capital in the Latin, Greek or Cyrillic script
 
 
-def names_in(text: str) -> list[str]:
-    """Runs of two to four capitalised words ("Arthur Conan Doyle", "Ottoman Empire"), in any of the Latin, Greek or Cyrillic scripts."""
-    found = []
+def name_runs(text: str) -> list[str]:
+    """Every run of two to four capitalised words ("Arthur Conan Doyle", "Ottoman Empire"), in any of the
+    Latin, Greek or Cyrillic scripts, as often as the text has it."""
+    runs = []
     for run in re.findall(rf"{UPPER}[\w'’-]+(?:[ \t]+(?:{UPPER}[\w'’-]+|of|de|bin|al|ibn))+", text):
         words = run.split()
         while words and words[0] in NOT_NAMES:
             words = words[1:]
-        candidate = " ".join(words)
-        if 2 <= len(words) <= 4 and not any(w in NOT_NAMES for w in words) and candidate not in found:
-            found.append(candidate)
-    return found
+        if 2 <= len(words) <= 4 and not any(w in NOT_NAMES for w in words):
+            runs.append(" ".join(words))
+    return runs
 
 
 def registry_hosts(metadata: dict) -> tuple[list[str], list[str], dict | None]:
@@ -690,20 +691,72 @@ def self_introductions(transcript: dict, show: str) -> list[str]:
                               if podshows.looks_like_person(name, show) and name.lower() not in show.lower()))
 
 
-def asr_hint(metadata: dict, description_limit: int = 1500) -> str:
-    """Context for the ASR model, so it spells the people and places of this episode right
-    ("Maya", not "Maia"): show, hosts, the names in the title and description, then the cleaned
-    description itself. A bare list of names is not enough: in tests Qwen3-ASR once answered a
-    names-only hint with the hint and dropped the speech (podcast_transcription.hint_failure)."""
-    show, episode = metadata.get("show", ""), metadata.get("episode", "")
+# Characters a name never needs: zero-width spaces, direction marks and invisible operators (show notes carry
+# them from web pages). ZWNJ and ZWJ (U+200C, U+200D) stay: some scripts spell names with them.
+INVISIBLE = re.compile(r"[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+CHAPTER = re.compile(r"\(?\b\d{1,2}:\d{2}(?::\d{2})?\)?\s*[^0-9.!?\n]{0,100}")   # a chapter's time and heading
+PARTICLES = {"de", "of", "al", "bin", "ibn", "van", "von", "der", "la", "le", "da", "di", "del"}
+
+
+def tidy_name(name: str) -> str:
+    """One name as the ASR model is given it: Unicode NFC, invisible marks removed, whitespace collapsed,
+    no surrounding quotes, brackets or trailing particle ("University of"); "" when it carries a link,
+    a handle, a number or markup."""
+    import unicodedata
+    name = " ".join(INVISIBLE.sub("", unicodedata.normalize("NFC", str(name or ""))).split())
+    name = name.strip(" \t\"'“”‘’«»()[]{},;:|")
+    words = name.split()
+    while words and words[-1].lower() in PARTICLES:
+        words.pop()
+    name = " ".join(words)
+    return "" if not name or re.search(r"[\d@#/\\<>*_`=|~]|https?:|www\.", name) else name
+
+
+def guest_like(name: str, ordinary: set[str], show: str) -> bool:
+    """Whether a capitalised run in the show notes can stand as a name: not shouting ("LIVE SPECIAL"),
+    not a possessive heading ("Rowan’s Opening Statement"), no word the same notes also use as an ordinary
+    lower-case word ("Learn More", "Building One of"), and not the show's own name."""
+    words = name.split()
+    return (not all(w.isupper() and len(w) > 1 for w in words)
+            and not any(re.search(r"['’]s$", w) for w in words)
+            and not any(w.lower() in ordinary for w in words if w.lower() not in PARTICLES)
+            and name.lower() not in show.lower() and show.lower() not in name.lower())
+
+
+def asr_names(metadata: dict) -> str:
+    """Context for the ASR model, so it spells this episode's people right ("Maya", not "Maia"): their
+    names, separated by spaces, and nothing else ("Maya Lindqvist Daniel Okafor Ruth Calder").
+    - Hosts: the registry's (else names.txt or the feed), when they look like people: a feed author that is
+      the show or its publisher is not a host.
+    - People the episode's own credits name.
+    - Guests and organisations the show notes name, when the title names them too or the notes do twice;
+      a capitalised phrase named once is as likely a chapter title, and is left out.
+    "" when no name is reliable: then the window is sent without context. Qwen3-ASR read the earlier
+    context (show, hosts, title and description) back into the transcript in a quarter of windows."""
+    import unicodedata
+    plain = lambda text: INVISIBLE.sub("", unicodedata.normalize("NFC", str(text or "")))   # one spelling of each name
+    show, title, raw = plain(metadata.get("show")), plain(metadata.get("episode")), plain(metadata.get("episode_description"))
     regular, cohosts, entry = registry_hosts(metadata)
-    hosts = ", ".join(regular + cohosts)
-    sponsors = sponsors_in(metadata.get("episode_description", "")) + podshows.active_advertisers(entry, metadata.get("published") or "")
-    description = clean_description(metadata.get("episode_description", ""), limit=description_limit, drop=sponsors)
-    names = [n for n in names_in(f"{episode}. {description}") if n not in hosts
-             and not any(brand.lower() in n.lower() for brand in sponsors)]
-    return (f"Podcast: {show}." + (f" Hosts: {hosts}." if hosts else "") + (f" Names: {', '.join(names)}." if names else "")
-            + f" Episode: {episode}. {description}").strip()
+    sponsors = sponsors_in(raw) + podshows.active_advertisers(entry, metadata.get("published") or "")
+    notes = clean_description(raw, limit=1500, drop=sponsors)
+    ordinary = {w.lower() for w in re.findall(r"\w+", f"{title} {notes}") if w.islower()}
+    hosts = [n for n in (tidy_name(h) for h in regular + cohosts)          # "Acme's Weekly": a publisher
+             if podshows.looks_like_person(n, show) and not re.search(r"['’]s\b", n)]
+    credited = [tidy_name(p.get("name", "")) for p in metadata.get("episode_people") or [] if isinstance(p, dict)]
+    tidy_title = " ".join(title.split())
+    own = notes.replace(tidy_title, " ") if tidy_title else notes    # notes often open with the title: not a second source
+    own = CHAPTER.sub(" ", own)                                     # "00:00 The Long Night": headings, not names
+    said = lambda name, text: len(re.findall(rf"(?<!\w){re.escape(name)}(?!\w)", text))   # whole words, any run
+    candidates = list(dict.fromkeys(name_runs(own)))
+    named = [n for n in candidates if said(n, tidy_title)]                    # the title's guests first
+    guests = [tidy_name(n) for n in named + [n for n in candidates if n not in named and said(n, own) >= 2]
+              if guest_like(n, ordinary, show)]
+    found: list[str] = []
+    for name in hosts + credited + guests:
+        if (name and name.casefold() not in {n.casefold() for n in found}
+                and not any(brand.lower() in name.lower() for brand in sponsors)):
+            found.append(name)
+    return " ".join(found)
 
 
 def work_dir(root: Path) -> Path:

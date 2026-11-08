@@ -183,13 +183,15 @@ class TranscriptionIntegrationTests(TranscriptionFixture):
 
 
 class NameHintTests(TranscriptionFixture):
-    HINT = "Podcast: Ask the Astronomer. Hosts: Rowan Mae Ellis. Names: Arthur Conan Doyle. Episode: The Baskervilles."
+    HINT = "Rowan Mae Ellis Arthur Conan Doyle"            # the shape podnote.asr_names gives: names only
+    SPEECH = "I'm Rowan Mae Ellis, and today Arthur Conan Doyle joins me to talk about the moors."
 
-    def hinted_runner(self, answer_with_hint: str) -> TranscriptionRunner:
-        self.prompts = []
+    def hinted_runner(self, answer_with_hint: str, asr_prompt=None, language_name: str = "") -> TranscriptionRunner:
+        self.prompts, self.calls = [], []
 
-        def asr(window_audio, raw_output, model, base_url, prompt=None):
+        def asr(window_audio, raw_output, model, base_url, prompt=None, language=None):
             self.prompts.append(prompt)
+            self.calls.append((Path(window_audio).read_bytes(), language))
             duration = probe_audio(window_audio)["duration_seconds"]
             text = answer_with_hint if prompt else "Rowan talks to Arthur Conan Doyle about the moors."
             body = {"model": model, "language": "en", "text": text,
@@ -199,27 +201,36 @@ class NameHintTests(TranscriptionFixture):
 
         return TranscriptionRunner(self.store, self.job_id, self.audio, self.root / "job",
                                    vad_model_path=DEFAULT_VAD_MODEL, window_policy_path=DEFAULT_WINDOW_POLICY,
-                                   vad_runner=self.fake_vad, request_runner=asr, asr_prompt=self.HINT)
+                                   vad_runner=self.fake_vad, request_runner=asr,
+                                   asr_prompt=[self.HINT] if asr_prompt is None else asr_prompt,
+                                   language="en" if language_name else "", language_name=language_name)
 
     def accepted(self) -> dict:
         path = next((self.root / "job" / "asr" / "accepted").glob("*.json"))
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def test_hint_is_sent_and_recorded(self) -> None:
-        result = self.hinted_runner("Rowan talks to Arthur Conan Doyle about the Baskervilles.").run_all()
+    def test_an_accepted_answer_takes_one_request(self) -> None:
+        result = self.hinted_runner(self.SPEECH).run_all()
         self.assertEqual(result["status"], "transcript_assembled")
         self.assertEqual([self.HINT], self.prompts)
         self.assertEqual("used", self.accepted()["asr_hint"])
 
-    def test_a_window_that_repeats_the_hint_is_transcribed_again_without_it(self) -> None:
-        result = self.hinted_runner(self.HINT).run_all()
+    def test_names_read_out_first_are_asked_for_again_without_them_once(self) -> None:
+        result = self.hinted_runner(self.HINT + " " + self.SPEECH, language_name="English").run_all()
         self.assertEqual(result["status"], "transcript_assembled")
-        self.assertEqual([self.HINT, None], self.prompts)
+        self.assertEqual([self.HINT, None], self.prompts)                  # no second, shorter context
         accepted = self.accepted()
         self.assertEqual("dropped: the transcript reads the hint out", accepted["asr_hint"])
         self.assertEqual("Rowan talks to Arthur Conan Doyle about the moors.", accepted["text"])
+        self.assertEqual(1, len({audio for audio, _ in self.calls}))      # the same window audio
+        self.assertEqual(["English", "English"], [language for _, language in self.calls])
 
-    def test_a_shorter_hint_is_tried_before_none(self) -> None:
+    def test_no_names_means_one_request_without_context(self) -> None:
+        self.hinted_runner(self.SPEECH, asr_prompt=[""]).run_all()
+        self.assertEqual([None], self.prompts)
+        self.assertEqual("none", self.accepted()["asr_hint"])
+
+    def test_an_earlier_callers_list_of_contexts_still_works(self) -> None:
         self.prompts = []
 
         def asr(window_audio, raw_output, model, base_url, prompt=None):
@@ -234,10 +245,10 @@ class NameHintTests(TranscriptionFixture):
         runner = TranscriptionRunner(self.store, self.job_id, self.audio, self.root / "job",
                                      vad_model_path=DEFAULT_VAD_MODEL, window_policy_path=DEFAULT_WINDOW_POLICY,
                                      vad_runner=self.fake_vad, request_runner=asr,
-                                     asr_prompt=[self.HINT, "Podcast: Ask the Astronomer."])
+                                     asr_prompt=[self.HINT, "Rowan Mae Ellis"])
         self.assertEqual("transcript_assembled", runner.run_all()["status"])
-        self.assertEqual([self.HINT, "Podcast: Ask the Astronomer."], self.prompts)   # read back, so the shorter one
-        self.assertEqual("used (shorter hint)", self.accepted()["asr_hint"])
+        self.assertEqual([self.HINT, "Rowan Mae Ellis"], self.prompts)
+        self.assertEqual("used (shorter hint)", self.accepted()["asr_hint"])   # a status old records hold
 
 
 class LanguageTests(TranscriptionFixture):
@@ -267,16 +278,22 @@ class PureTests(unittest.TestCase):
 
     def test_hint_failure(self) -> None:
         window = {"duration_ms": 14 * 60000}
+        names = NameHintTests.HINT
         speech = " ".join(f"word{i}" for i in range(2000))
-        self.assertEqual("", hint_failure({"text": speech}, window, NameHintTests.HINT))
-        self.assertEqual("14 words for 14.0 minutes", hint_failure({"text": " ".join(["w"] * 14)}, window, NameHintTests.HINT))
-        bare = "Rowan Mae Ellis Arthur Conan Doyle The Baskervilles Episode " * 100     # the hint's words, no frame
-        self.assertEqual("the transcript repeats the hint", hint_failure({"text": bare}, window, "Names: " + bare))
-        # the hint read out before the speech: the frame gives it away, however long the speech after it
-        self.assertEqual("the transcript reads the hint out", hint_failure({"text": NameHintTests.HINT + " " + speech}, window, NameHintTests.HINT))
-        # a host saying the show's name, hosts and episode in their own words is fine
-        spoken = "Welcome to Ask the Astronomer, I'm Rowan Mae Ellis, and today: The Baskervilles. "
-        self.assertEqual("", hint_failure({"text": spoken + speech}, window, NameHintTests.HINT))
+        self.assertEqual("", hint_failure({"text": speech}, window, names))
+        self.assertEqual("14 words for 14.0 minutes", hint_failure({"text": " ".join(["w"] * 14)}, window, names))
+        self.assertEqual("14 words for 14.0 minutes", hint_failure({"text": "Arthur Doyle, Rowan Ellis. " * 3 + "w w"}, window, names))
+        # the names read out word for word before the speech, perhaps after a filler word
+        self.assertEqual("the transcript reads the hint out", hint_failure({"text": names + " " + speech}, window, names))
+        self.assertEqual("the transcript reads the hint out", hint_failure({"text": "Um. " + names + ". " + speech}, window, names))
+        self.assertEqual("the transcript reads the hint out", hint_failure({"text": (names + " ") * 400}, window, names))
+        # speech naming the same people is kept: introductions, another order, the names later on
+        for spoken in ("I'm Rowan Mae Ellis, and with me today is Arthur Conan Doyle. ",
+                       "Arthur Conan Doyle and Rowan Mae Ellis here. ", "Welcome back. " * 5 + names + ". "):
+            self.assertEqual("", hint_failure({"text": spoken + speech}, window, names), spoken)
+        self.assertEqual("", hint_failure({"text": "Rowan Mae here. " + speech}, window, "Rowan Mae"))   # one name: proves nothing
+        bare = "Rowan Mae Ellis Arthur Conan Doyle The Baskervilles Episode " * 100   # a long context looped
+        self.assertEqual("the transcript repeats the hint", hint_failure({"text": "So. " * 4 + bare}, window, "Names " + bare))
 
     def test_the_request_names_the_language(self) -> None:
         from unittest import mock
