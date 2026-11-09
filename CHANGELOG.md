@@ -4,6 +4,14 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-11-09
+
+### Fixed
+
+- **Repetition loops.** The speech model can get stuck and write one word or one paragraph over and over; a 15-minute window came back as 8,000 words of "no no no", and the check that accepts a window by its time coverage let it through. Every answer is now measured for repeated passages. A looping answer with a context is asked for again without it; one that loops without it is cut in two at a pause and each half is transcribed alone, which gave a clean transcript on the window that triggered this. A quarter of a window that still loops stops the episode, and no looped text is kept.
+- On a sample of 845 saved windows the check flagged the 11 loops (62% to 100% repeated) and nothing else (the next highest was 2%).
+- **Not redone.** Episodes already made keep their text; see the manual for how to transcribe one again.
+
 ## [6.1.0] - 2026-11-08
 
 ### Changed
@@ -48,7 +56,8 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 YouTube as a second source, every episode in its own language, several people on one installation, and crash-safe bookkeeping. See [What's new in 6.0](README.md#whats-new-in-60).
 
-[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.0...HEAD
+[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.1...HEAD
+[6.1.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/alexgranford/podcast-knowledge/releases/tag/v6.0.0

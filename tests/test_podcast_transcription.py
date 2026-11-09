@@ -17,8 +17,12 @@ from podcast_transcription import (
     DEFAULT_VAD_MODEL,
     DEFAULT_WINDOW_POLICY,
     TranscriptionRunner,
+    WindowRequestError,
     atomic_json,
     hint_failure,
+    loop_failure,
+    merge_pieces,
+    split_point,
 )
 from podcast_asr import TemporalCoverageError
 from podcast_state import PodcastStore, file_sha256, payload_hash
@@ -273,6 +277,65 @@ class LanguageTests(TranscriptionFixture):
         self.assertEqual("el", transcript["language"])          # the stated language, not the model's spelling of it
 
 
+class LoopTests(TranscriptionFixture):
+    """A window the speech model answers with a repetition loop is cut in two at a pause, each half asked for
+    alone, and the halves made one answer; a window that loops in every piece fails, never kept."""
+    LOOP = "no " * 600
+
+    def runner_with(self, answers, asr_prompt=None) -> TranscriptionRunner:
+        self.calls = []
+
+        def asr(window_audio, raw_output, model, base_url, prompt=None, language=None):
+            duration = probe_audio(window_audio)["duration_seconds"]
+            self.calls.append((prompt, round(duration, 1)))
+            text = answers(prompt, duration)
+            body = {"model": model, "language": "en", "text": text,
+                    "segments": [{"start": 0.0, "end": duration, "text": text}], "finish_reason": "stop"}
+            atomic_json(raw_output, body)
+            return body
+
+        return TranscriptionRunner(self.store, self.job_id, self.audio, self.root / "job",
+                                   vad_model_path=DEFAULT_VAD_MODEL, window_policy_path=DEFAULT_WINDOW_POLICY,
+                                   vad_runner=self.fake_vad, request_runner=asr, asr_prompt=asr_prompt or [])
+
+    def accepted(self) -> dict:
+        return json.loads(next((self.root / "job" / "asr" / "accepted").glob("*.json")).read_text(encoding="utf-8"))
+
+    def test_a_looping_window_is_asked_for_again_in_two_halves(self) -> None:
+        pieces = iter(["First half of the talk.", "Second half of the talk."])
+        runner = self.runner_with(lambda prompt, duration: self.LOOP if duration > 1.5 else next(pieces))
+        self.assertEqual("transcript_assembled", runner.run_all()["status"])
+        self.assertEqual([None, None, None], [prompt for prompt, _ in self.calls])
+        whole, first, second = (seconds for _, seconds in self.calls)
+        self.assertAlmostEqual(whole, first + second, delta=0.1)           # the halves are the window
+        accepted = self.accepted()
+        self.assertEqual("First half of the talk. Second half of the talk.", accepted["text"])
+        self.assertEqual("none; looped: cut into 2 pieces", accepted["asr_hint"])
+        self.assertTrue(accepted["coverage"]["accepted"])
+
+    def test_names_that_loop_fall_back_without_them_and_then_a_loop_is_cut(self) -> None:
+        pieces = iter(["One.", "Two."])
+        runner = self.runner_with(lambda prompt, duration: self.LOOP if duration > 1.5 else next(pieces), asr_prompt=["Rowan Mae Ellis"])
+        runner.run_all()
+        self.assertEqual(["Rowan Mae Ellis", None, None, None], [prompt for prompt, _ in self.calls])
+        self.assertEqual("dropped: the transcript loops (100% of it is repeated); looped: cut into 2 pieces", self.accepted()["asr_hint"])
+
+    def test_a_half_that_loops_is_cut_again_and_a_loop_everywhere_fails(self) -> None:
+        runner = self.runner_with(lambda prompt, duration: self.LOOP)
+        with self.assertRaises(WindowRequestError) as caught:
+            runner.run_all()
+        self.assertEqual("asr_window_looped", caught.exception.failure_code)
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(3, len(self.calls))                               # the window, a half, a quarter
+        self.assertFalse(list((self.root / "job" / "asr" / "accepted").glob("*.json")))
+        self.assertFalse(list((self.root / "job" / "asr" / "raw").glob("*.part-*")))   # no cut audio left behind
+
+    def test_a_clean_answer_is_never_cut(self) -> None:
+        self.runner_with(lambda prompt, duration: "A complete fixture transcript.").run_all()
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual("none", self.accepted()["asr_hint"])
+
+
 class PureTests(unittest.TestCase):
     """Checks that need neither ffmpeg nor the speech-detection runtime, so they run everywhere."""
 
@@ -294,6 +357,36 @@ class PureTests(unittest.TestCase):
         self.assertEqual("", hint_failure({"text": "Rowan Mae here. " + speech}, window, "Rowan Mae"))   # one name: proves nothing
         bare = "Rowan Mae Ellis Arthur Conan Doyle The Baskervilles Episode " * 100   # a long context looped
         self.assertEqual("the transcript repeats the hint", hint_failure({"text": "So. " * 4 + bare}, window, "Names " + bare))
+
+    def test_loop_failure_tells_a_loop_from_speech(self) -> None:
+        speech = " ".join(f"word{i}" for i in range(2000))
+        self.assertEqual("", loop_failure({"text": speech}))
+        self.assertEqual("", loop_failure({"text": ""}))
+        self.assertEqual("", loop_failure({"text": "no no no"}))                       # too short to measure
+        self.assertEqual("the transcript loops (100% of it is repeated)", loop_failure({"text": "no " * 600}))
+        paragraph = "She told me the whole story again and then she left the room. "
+        self.assertTrue(loop_failure({"text": speech + " " + paragraph * 60}).startswith("the transcript loops"))   # a loop from the middle on
+        self.assertTrue(loop_failure({"segments": [{"text": "no, " * 300}]}).startswith("the transcript loops"))    # read from the segments
+        # spoken repeats stay far below the bar: a stutter, a chorus sung four times, a catchphrase now and then
+        self.assertEqual("", loop_failure({"text": speech + " no, no, no, no, no, no, no, no, no, no, no, no. " + speech}))
+        self.assertEqual("", loop_failure({"text": speech + (" And we sing the chorus again tonight." * 4) + " " + speech}))
+        self.assertEqual("", loop_failure({"text": (speech + " That is the thing about the market. ") * 3}))
+
+    def test_a_looping_window_is_cut_at_a_pause_near_its_middle(self) -> None:
+        window = {"speech_segments_ms": [[0, 4000], [4100, 9000], [9500, 10000], [10600, 20000]]}
+        self.assertEqual(10300, split_point(window, 0, 20000))       # the pause nearest the middle (not 4,050, outside the middle half; not 9,250, farther)
+        self.assertEqual(10000, split_point({"speech_segments_ms": [[0, 20000]]}, 0, 20000))   # no pause: the middle
+        self.assertEqual(10300, split_point(window, 9000, 12000))           # a stretch of the window: pauses inside it only
+        self.assertEqual(7500, split_point({"speech_segments_ms": []}, 5000, 10000))
+
+    def test_pieces_become_one_answer_with_the_segments_where_they_were(self) -> None:
+        first = {"text": "One.", "language": "en", "segments": [{"start": 0.0, "end": 4.0, "text": "One."}]}
+        second = {"text": "Two.", "language": "en", "segments": [{"start": 0.0, "end": 6.0, "text": "Two."}]}
+        merged = merge_pieces([(0, first), (4000, second)], 10000)
+        self.assertEqual("One. Two.", merged["text"])
+        self.assertEqual([(0.0, 4.0), (4.0, 10.0)], [(s["start"], s["end"]) for s in merged["segments"]])
+        self.assertEqual("en", merged["language"])
+        self.assertEqual("Two.", merge_pieces([(0, {"segments": [{"start": 0, "end": 1, "text": "Two."}]})], 5000)["text"])
 
     def test_the_request_names_the_language(self) -> None:
         from unittest import mock

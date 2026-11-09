@@ -233,7 +233,7 @@ flowchart TD
     add -- "language unclear" --> ask(["Ask the user<br/>which language"])
     add -- "queued, language stated" --> resolve["Resolve and download<br/>source connector"]
     resolve --> asr["Speech recognition<br/>~15-minute windows,<br/>told the language and the names"]
-    asr -- "names read back or<br/>too few words: once<br/>more without them" --> asr
+    asr -- "names read back, too few words<br/>or a loop: once more<br/>without them; a loop is cut in two" --> asr
     asr --> parts["Part notes<br/>~1,800 words each"]
     parts -- "wrong language: ask again" --> parts
     parts --> body["Themes, summary, tags"]
@@ -447,7 +447,7 @@ With the model server running and the settings filled in:
 - **Crash-safe bookkeeping:** the queue, who asked for what and the messages still to send live in one small SQLite store; a message that fails to send is tried again.
 - **One set of monitoring rules** for every source, with nothing forgotten when a feed or listing moves on.
 - **Health at a glance:** `podstatus.py`, a one-off notice when a source cannot be read for two days, and `check_hermes.py` after a Hermes upgrade.
-- **Long episodes** carried across runs, and a speech-model echo of its own hint caught and redone.
+- **Long episodes** carried across runs, and a speech-model echo of its own hint, or a repetition loop, caught and redone.
 - **Safer installation checks:** cron wrappers with a dry start, and a check that the speech runtime matches the code.
 
 ## More
