@@ -4,6 +4,12 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [6.1.2] - 2026-11-09
+
+### Fixed
+
+- **Loops that survive the first cuts.** 6.1.1 cut a looping window in two and each half once more, then stopped the episode. One real window still looped in a 69-second stretch that both of its halves transcribed cleanly, so the cut now continues while a stretch is at least a minute long (pieces of about 30 seconds at the finest). The episode stops, with no looped text kept, only when a stretch under a minute still loops.
+
 ## [6.1.1] - 2026-11-09
 
 ### Fixed
@@ -56,7 +62,8 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 YouTube as a second source, every episode in its own language, several people on one installation, and crash-safe bookkeeping. See [What's new in 6.0](README.md#whats-new-in-60).
 
-[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.1...HEAD
+[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.2...HEAD
+[6.1.2]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.0...v6.0.1
