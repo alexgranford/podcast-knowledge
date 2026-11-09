@@ -46,8 +46,8 @@ scripts/podnote.py "<url>" --force --retranscribe       # transcribe again (the 
 
 - **What happens** — Qwen3-ASR can get stuck and write one word or one paragraph over and over (a 15-minute window came back as 8,000 words of "no no no"; others looped a paragraph from the middle on). The answer spans the whole window, so the coverage check accepts it.
 - **The check** — every answer, with or without a context, is measured: the share of its words inside six-word passages that occur five or more times. At 10% or more it is a loop. Over 845 saved windows the 11 looped ones measured 62% to 100% and no other more than 2%; a stutter, a chorus or a catchphrase stays far below.
-- **The remedy** — the same audio loops the same way, so asking again does not help. A looping answer with a context is asked for again without it, as for a read-back. One that loops without it is cut in two at the pause nearest the middle, so no word is cut, and each half is transcribed alone; a half that loops is cut again. The halves become one answer for the window.
-- **Failure** — a quarter of a window that still loops stops the episode with `the speech model loops on N seconds of audio even cut into 4 pieces`; no looped text is kept.
+- **The remedy** — the same audio loops the same way, so asking again does not help. A looping answer with a context is asked for again without it, as for a read-back. One that loops without it is cut in two at the pause nearest the middle, so no word is cut, and each half is transcribed alone; a half that loops is cut again, and so on down to pieces of about 30 seconds (a 69-second stretch looped where both of its halves did not). The pieces become one answer for the window.
+- **Failure** — a stretch under a minute that still loops stops the episode with `the speech model keeps looping on N seconds of audio, at T s in the window, even cut into pieces`; no looped text is kept.
 
 **Caches:**
 

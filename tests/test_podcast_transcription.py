@@ -320,15 +320,39 @@ class LoopTests(TranscriptionFixture):
         self.assertEqual(["Rowan Mae Ellis", None, None, None], [prompt for prompt, _ in self.calls])
         self.assertEqual("dropped: the transcript loops (100% of it is repeated); looped: cut into 2 pieces", self.accepted()["asr_hint"])
 
-    def test_a_half_that_loops_is_cut_again_and_a_loop_everywhere_fails(self) -> None:
+    def test_a_loop_everywhere_fails_after_the_cuts(self) -> None:
+        from unittest import mock
+        import podcast_transcription
         runner = self.runner_with(lambda prompt, duration: self.LOOP)
-        with self.assertRaises(WindowRequestError) as caught:
-            runner.run_all()
+        with mock.patch.object(podcast_transcription, "LOOP_CUTS", 2), mock.patch.object(podcast_transcription, "LOOP_MIN_MS", 0):
+            with self.assertRaises(WindowRequestError) as caught:
+                runner.run_all()
         self.assertEqual("asr_window_looped", caught.exception.failure_code)
         self.assertFalse(caught.exception.retryable)
         self.assertEqual(3, len(self.calls))                               # the window, a half, a quarter
         self.assertFalse(list((self.root / "job" / "asr" / "accepted").glob("*.json")))
         self.assertFalse(list((self.root / "job" / "asr" / "raw").glob("*.part-*")))   # no cut audio left behind
+
+    def test_a_stretch_too_short_to_cut_again_fails_at_once(self) -> None:
+        from unittest import mock
+        import podcast_transcription
+        runner = self.runner_with(lambda prompt, duration: self.LOOP)
+        with mock.patch.object(podcast_transcription, "LOOP_MIN_MS", 5000):    # the fixture's pieces are 1 s
+            with self.assertRaises(WindowRequestError):
+                runner.run_all()
+        self.assertEqual(2, len(self.calls))                               # the window, one half: too short to cut
+
+    def test_a_half_that_loops_is_cut_again_until_it_reads_clean(self) -> None:
+        from unittest import mock
+        import podcast_transcription
+        pieces = iter(["One.", "Two.", "Three.", "Four."])
+        # loops above 0.6 s of audio: the window (2 s) and both halves (1 s) loop; the quarters (0.5 s) read clean
+        runner = self.runner_with(lambda prompt, duration: self.LOOP if duration > 0.6 else next(pieces))
+        with mock.patch.object(podcast_transcription, "LOOP_MIN_MS", 0):
+            self.assertEqual("transcript_assembled", runner.run_all()["status"])
+        self.assertEqual("One. Two. Three. Four.", self.accepted()["text"])
+        self.assertEqual("none; looped: cut into 4 pieces", self.accepted()["asr_hint"])
+        self.assertEqual(7, len(self.calls))                               # the window, two halves, four quarters
 
     def test_a_clean_answer_is_never_cut(self) -> None:
         self.runner_with(lambda prompt, duration: "A complete fixture transcript.").run_all()

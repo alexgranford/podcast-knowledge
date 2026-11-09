@@ -136,7 +136,8 @@ ECHO_SLACK = 3                         # words of speech ("um", "so") the echo m
 LOOP_GRAM = 6                          # words in a passage that may be repeated
 LOOP_REPEATS = 5                       # said this often, a passage is a loop, not speech
 LOOP_SHARE = 0.10                      # of the answer's words inside such passages
-LOOP_CUTS = 2                          # a looping window is cut in two, each half again if need be: quarters at most
+LOOP_CUTS = 6                          # a looping window is cut in two, each half again while it loops: six levels at most
+LOOP_MIN_MS = 30000                    # a stretch shorter than twice this is not cut again
 
 
 def split_point(window: dict[str, Any], start_ms: int, end_ms: int) -> int:
@@ -533,7 +534,7 @@ class TranscriptionRunner:
     def _in_pieces(self, window: dict[str, Any], window_audio: Path, raw_path: Path, base_url: str | None,
                    start_ms: int, end_ms: int, depth: int) -> list[tuple[int, dict[str, Any]]]:
         """The part of the window from start_ms to end_ms in two halves, each asked for without a context; a
-        half that loops too is cut again, down to quarters. Returns (start_ms, raw response) per piece."""
+        half that loops too is cut again, and so on while a stretch is still at least a minute long. Returns (start_ms, raw response) per piece."""
         middle = split_point(window, start_ms, end_ms)
         pieces: list[tuple[int, dict[str, Any]]] = []
         for start, end in ((start_ms, middle), (middle, end_ms)):
@@ -547,11 +548,11 @@ class TranscriptionRunner:
                 part_raw.unlink(missing_ok=True)
             if not loop_failure(raw):
                 pieces.append((start, raw))
-            elif depth >= LOOP_CUTS:
+            elif depth >= LOOP_CUTS or end - start < 2 * LOOP_MIN_MS:
                 raise WindowRequestError(
                     "response_malformed", "asr_window_looped",
-                    f"the speech model loops on {(end - start) / 1000:.0f} seconds of audio even cut into {2 ** depth} pieces "
-                    f"(at {start / 1000:.0f} s in the window)", False)
+                    f"the speech model keeps looping on {(end - start) / 1000:.0f} seconds of audio, "
+                    f"at {start / 1000:.0f} s in the window, even cut into pieces", False)
             else:
                 pieces += self._in_pieces(window, window_audio, raw_path, base_url, start, end, depth + 1)
         return pieces
