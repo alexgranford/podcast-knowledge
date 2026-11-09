@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import json
 import os
@@ -132,6 +133,77 @@ def default_request_runner(window_audio: Path, raw_output: Path, model: str,
 ECHO_HEAD = 8                          # the context's first words that, read out at the start, mark an echo
 ECHO_MIN = 4                           # a shorter context (one name) proves nothing by being said first
 ECHO_SLACK = 3                         # words of speech ("um", "so") the echo may come after
+LOOP_GRAM = 6                          # words in a passage that may be repeated
+LOOP_REPEATS = 5                       # said this often, a passage is a loop, not speech
+LOOP_SHARE = 0.10                      # of the answer's words inside such passages
+LOOP_CUTS = 2                          # a looping window is cut in two, each half again if need be: quarters at most
+
+
+def split_point(window: dict[str, Any], start_ms: int, end_ms: int) -> int:
+    """Where to cut the stretch start_ms..end_ms of a window (times from the window's start): the middle of
+    the pause nearest the middle, so no word is cut, provided it lies in the middle half; else the middle."""
+    middle, span = (start_ms + end_ms) // 2, end_ms - start_ms
+    speech = sorted((int(a), int(b)) for a, b in window.get("speech_segments_ms") or [] if int(b) > start_ms and int(a) < end_ms)
+    pauses = [(a_end + b_start) // 2 for (_, a_end), (b_start, _) in zip(speech, speech[1:])
+              if b_start - a_end >= 200 and start_ms + span // 4 <= (a_end + b_start) // 2 <= end_ms - span // 4]
+    return min(pauses, key=lambda point: abs(point - middle)) if pauses else middle
+
+
+def cut_audio(source: Path, start_ms: int, end_ms: int, target: Path) -> None:
+    """The part of a window's audio from start_ms to end_ms, as the windows themselves are written."""
+    import shutil
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise WindowRequestError("response_malformed", "asr_window_looped", "ffmpeg is needed to cut a looping window", False)
+    done = subprocess.run([ffmpeg, "-nostdin", "-y", "-i", str(source), "-ss", f"{start_ms / 1000:.3f}", "-t",
+                           f"{(end_ms - start_ms) / 1000:.3f}", "-map_metadata", "-1", "-vn", "-ac", "1", "-ar", "16000",
+                           "-c:a", "pcm_s16le", str(target)], capture_output=True, timeout=600)
+    if done.returncode or not target.is_file() or target.stat().st_size == 0:
+        raise WindowRequestError("response_malformed", "asr_window_looped",
+                                 "cutting a looping window failed: " + done.stderr.decode("utf-8", "replace")[-300:], False)
+
+
+def merge_pieces(pieces: list[tuple[int, dict[str, Any]]], duration_ms: int) -> dict[str, Any]:
+    """The answers for the pieces of a window as one answer for the window: the texts in order, the
+    segments moved to where each piece began."""
+    segments, texts = [], []
+    for index, (start, raw) in enumerate(pieces):
+        end = pieces[index + 1][0] if index + 1 < len(pieces) else duration_ms
+        text = str(raw.get("text") or "").strip() or " ".join(str(s.get("text") or "").strip() for s in raw.get("segments") or []).strip()
+        texts.append(text)
+        for segment in raw.get("segments") or []:
+            try:
+                begun, ended = start / 1000 + float(segment["start"]), start / 1000 + float(segment["end"])
+            except (KeyError, TypeError, ValueError):
+                begun, ended = start / 1000, end / 1000
+            segments.append({**segment, "start": begun, "end": min(ended, end / 1000)})
+    merged = {"text": " ".join(texts), "segments": segments}
+    for key in ("language", "model"):
+        if value := next((raw[key] for _, raw in pieces if raw.get(key)), None):
+            merged[key] = value
+    return merged
+
+
+def loop_failure(raw: dict[str, Any]) -> str:
+    """Why an answer, with or without a context, is a repetition loop ("" when it is not). Qwen3-ASR can
+    get stuck and write one word or one paragraph over and over (a 15-minute window came back as 8,000
+    words of "no no no"; others looped a paragraph from the middle on). Such an answer spans the whole
+    window, so the coverage check accepts it. The measure is the share of the answer's words inside
+    six-word passages that occur five or more times. Over 845 saved windows, 11 looped ones measured 62% to
+    100% and no other window more than 2%, so 10% leaves a wide margin on both sides; spoken repeats
+    ("no, no, no, no", a chorus) stay far below it."""
+    text = str(raw.get("text") or "") or " ".join(str(s.get("text") or "") for s in raw.get("segments") or [])
+    words = re.findall(r"\w+", text.lower())
+    if len(words) < LOOP_GRAM:
+        return ""
+    grams = [tuple(words[i:i + LOOP_GRAM]) for i in range(len(words) - LOOP_GRAM + 1)]
+    counts = collections.Counter(grams)
+    covered = bytearray(len(words))
+    for i, gram in enumerate(grams):
+        if counts[gram] >= LOOP_REPEATS:
+            covered[i:i + LOOP_GRAM] = b"\x01" * LOOP_GRAM
+    share = sum(covered) / len(words)
+    return f"the transcript loops ({share:.0%} of it is repeated)" if share >= LOOP_SHARE else ""
 
 
 def hint_failure(raw: dict[str, Any], window: dict[str, Any], hint: str) -> str:
@@ -434,19 +506,55 @@ class TranscriptionRunner:
     def _request_with_hint(self, window_audio: Path, raw_path: Path, window: dict[str, Any],
                            base_url: str | None) -> tuple[dict[str, Any], str]:
         """One window with each context in turn (the transcription step gives one: the episode's names),
-        then without one: an answer that fails hint_failure() is asked for again with the next. Returns
-        (raw response, status): "used", "used (shorter hint)" (an earlier version's second context; kept so
-        old records read), "dropped: <why>", or "none" when there was no context."""
+        then without one: an answer that fails loop_failure() or hint_failure() is asked for again with the
+        next. A loop is the same on the same audio, so a window that loops even without a context is cut in
+        two at a pause and each half asked for alone (see _in_pieces). Returns (raw response, status):
+        "used", "used (shorter hint)" (an earlier version's second context; kept so old records read),
+        "dropped: <why>", or "none" when there was no context; "; looped: cut into N pieces" is added when
+        the window had to be cut."""
         problems = []
         for index, prompt in enumerate(self.asr_prompts):
             raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, prompt=prompt, **self.asr_language)
-            problem = hint_failure(raw, window, prompt)
+            problem = loop_failure(raw) or hint_failure(raw, window, prompt)
             if not problem:
                 return raw, "used" if index == 0 else "used (shorter hint)"
             problems.append(problem)
             raw_path.unlink(missing_ok=True)
+        status = f"dropped: {'; '.join(problems)}" if problems else "none"
         raw = self.request_runner(window_audio, raw_path, self.asr_model, base_url, **self.asr_language)
-        return raw, f"dropped: {'; '.join(problems)}" if problems else "none"
+        if not loop_failure(raw):
+            return raw, status
+        raw_path.unlink(missing_ok=True)                  # the looped answer must not be taken up again after a crash
+        pieces = self._in_pieces(window, window_audio, raw_path, base_url, 0, window["duration_ms"], 1)
+        raw = merge_pieces(pieces, window["duration_ms"])
+        atomic_json(raw_path, raw)
+        return raw, f"{status}; looped: cut into {len(pieces)} pieces"
+
+    def _in_pieces(self, window: dict[str, Any], window_audio: Path, raw_path: Path, base_url: str | None,
+                   start_ms: int, end_ms: int, depth: int) -> list[tuple[int, dict[str, Any]]]:
+        """The part of the window from start_ms to end_ms in two halves, each asked for without a context; a
+        half that loops too is cut again, down to quarters. Returns (start_ms, raw response) per piece."""
+        middle = split_point(window, start_ms, end_ms)
+        pieces: list[tuple[int, dict[str, Any]]] = []
+        for start, end in ((start_ms, middle), (middle, end_ms)):
+            part = raw_path.with_name(f"{raw_path.stem}.part-{start}.wav")
+            part_raw = part.with_suffix(".json")
+            try:
+                cut_audio(window_audio, start, end, part)
+                raw = self.request_runner(part, part_raw, self.asr_model, base_url, **self.asr_language)
+            finally:
+                part.unlink(missing_ok=True)
+                part_raw.unlink(missing_ok=True)
+            if not loop_failure(raw):
+                pieces.append((start, raw))
+            elif depth >= LOOP_CUTS:
+                raise WindowRequestError(
+                    "response_malformed", "asr_window_looped",
+                    f"the speech model loops on {(end - start) / 1000:.0f} seconds of audio even cut into {2 ** depth} pieces "
+                    f"(at {start / 1000:.0f} s in the window)", False)
+            else:
+                pieces += self._in_pieces(window, window_audio, raw_path, base_url, start, end, depth + 1)
+        return pieces
 
     def transcribe_next(self) -> dict[str, Any]:
         job = self.store.get_job(self.job_id)

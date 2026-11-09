@@ -40,7 +40,14 @@ scripts/podnote.py "<url>" --force --retranscribe       # transcribe again (the 
   - a names list read out mid-speech, or a context of one name, cannot be told from speech naming those people, and is kept;
   - an answer looping over the names in another order is caught only when it is also too short;
   - another proper name the notes stress (a place, a product, a book) can be included.
-- **Record** — each accepted window keeps `asr_hint`: `used`, `dropped: <why>` or `none`; records from before 6.1 can also hold `used (shorter hint)`.
+- **Record** — each accepted window keeps `asr_hint`: `used`, `dropped: <why>` or `none`, followed by `; looped: cut into N pieces` when the window had to be cut (below); records from before 6.1 can also hold `used (shorter hint)`.
+
+**Repetition loops:**
+
+- **What happens** — Qwen3-ASR can get stuck and write one word or one paragraph over and over (a 15-minute window came back as 8,000 words of "no no no"; others looped a paragraph from the middle on). The answer spans the whole window, so the coverage check accepts it.
+- **The check** — every answer, with or without a context, is measured: the share of its words inside six-word passages that occur five or more times. At 10% or more it is a loop. Over 845 saved windows the 11 looped ones measured 62% to 100% and no other more than 2%; a stutter, a chorus or a catchphrase stays far below.
+- **The remedy** — the same audio loops the same way, so asking again does not help. A looping answer with a context is asked for again without it, as for a read-back. One that loops without it is cut in two at the pause nearest the middle, so no word is cut, and each half is transcribed alone; a half that loops is cut again. The halves become one answer for the window.
+- **Failure** — a quarter of a window that still loops stops the episode with `the speech model loops on N seconds of audio even cut into 4 pieces`; no looped text is kept.
 
 **Caches:**
 
