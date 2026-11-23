@@ -4,6 +4,13 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-11-23
+
+### Changed
+
+- **The model server key is `OMLX_SCRIPT_API_KEY`.** Hermes 0.23.2 keeps the keys its own settings use (its speech and vision settings use `OMLX_API_KEY`) away from scripts, so the queue could no longer reach the model server. The skill now reads only `OMLX_SCRIPT_API_KEY`; an oMLX API-only sub-key is enough for everything it does (models, speech, text, loading and unloading).
+- **Upgrade:** add `OMLX_SCRIPT_API_KEY` to your `.env` (an oMLX sub-key, or the same value as before). The old name is not read, and there is no fallback to it; without the new one the run stops with `OMLX_SCRIPT_API_KEY is not configured`.
+
 ## [6.1.2] - 2026-11-09
 
 ### Fixed
@@ -62,7 +69,8 @@ Each release, newest first. The format follows [Keep a Changelog](https://keepac
 
 YouTube as a second source, every episode in its own language, several people on one installation, and crash-safe bookkeeping. See [What's new in 6.0](README.md#whats-new-in-60).
 
-[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.2...HEAD
+[Unreleased]: https://github.com/alexgranford/podcast-knowledge/compare/v6.2.0...HEAD
+[6.2.0]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.2...v6.2.0
 [6.1.2]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/alexgranford/podcast-knowledge/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/alexgranford/podcast-knowledge/compare/v6.0.1...v6.1.0

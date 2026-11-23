@@ -1,14 +1,14 @@
 ---
 name: podcast-knowledge
 description: Use when the user sends an Apple Podcasts or YouTube episode link, a show to follow, or a title search, and wants a knowledge note in Markdown (for example in an Obsidian vault), in the episode's own language.
-version: 6.1.2
+version: 6.2.0
 required_environment_variables:
   - name: OMLX_BASE_URL
     prompt: Address of the model server (oMLX or any OpenAI-compatible server), e.g. http://<host>:8000
     help: "The server that runs the speech and text models; see README, Models."
-  - name: OMLX_API_KEY
-    prompt: API key of the model server
-    help: "oMLX requires a key; for a server without authentication any non-empty value works."
+  - name: OMLX_SCRIPT_API_KEY
+    prompt: API key of the model server for this skill's scripts (an oMLX sub-key works)
+    help: "oMLX requires a key; an API-only sub-key is enough. Under Hermes keep OMLX_API_KEY for Hermes's own speech and vision settings: scripts no longer receive it. For a server without authentication any non-empty value works."
   - name: PODNOTE_BRAVE_API_KEY
     prompt: Brave Search API key, for checking claims and naming cited books on the web (optional)
     help: "https://brave.com/search/api/ - the skill's own name: Hermes never passes its own BRAVE_SEARCH_API_KEY to skill scripts. The same key value works."

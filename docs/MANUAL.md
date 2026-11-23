@@ -237,12 +237,12 @@ One installation can serve the admin (who owns the notes folder, the model serve
 
 - **Under Hermes** — Hermes's own `.env` (`~/.hermes/.env`; in Docker `/opt/data/.env`), handed to the cron jobs. `SKILL.md` declares the keys it needs (`required_environment_variables`), so Hermes reports missing ones.
 - **Elsewhere** — `.env` in the skill folder, copied from `.env.example`, git-ignored, `chmod 600`. `scripts/settings.py` loads it and never overrides a variable already set, so the shell wins.
-- **Secrets** (`OMLX_API_KEY`, `PODNOTE_API_KEY`, `PODNOTE_BRAVE_API_KEY`) belong only in that `.env`; the state files that name people (`users.json`, `app.sqlite3`) are written with mode 600.
+- **Secrets** (`OMLX_SCRIPT_API_KEY`, `PODNOTE_API_KEY`, `PODNOTE_BRAVE_API_KEY`) belong only in that `.env`; the state files that name people (`users.json`, `app.sqlite3`) are written with mode 600.
 
 | variable | needed | default | meaning |
 | --- | --- | --- | --- |
 | `OMLX_BASE_URL` | required | `http://127.0.0.1:8000` | model server address (speech recognition, and the text model unless `PODNOTE_BASE_URL` is set) |
-| `OMLX_API_KEY` | required | — | model server key; any non-empty value if your server has no auth |
+| `OMLX_SCRIPT_API_KEY` | required | — | model server key for the skill's scripts; an oMLX API-only sub-key is enough, any non-empty value if your server has no auth. Under Hermes, `OMLX_API_KEY` stays Hermes's own (its speech and vision settings) and is not passed to scripts, so the skill does not read it |
 | `PODNOTE_ROOT` | required | `~/Notes` | the folder notes go under: any local folder (an Obsidian vault works well) |
 | `PODNOTE_CACHE` | recommended | `/var/tmp/podnote` | working folder per episode (transcript, part notes, records) |
 | `PODNOTE_STATE` | recommended | `/var/tmp/podnote-state` | the queue's store, show registry, monitor state, logs, locks and the ASR database |
