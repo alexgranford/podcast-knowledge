@@ -45,9 +45,11 @@ def config(base_url: str | None = None, model: str | None = None) -> dict:
             for item in addresses
         ):
             raise OMLXError("Plain HTTP is allowed only for private/loopback oMLX addresses")
-    key = setting("OMLX_API_KEY")
+    # The skill's own key: under Hermes, OMLX_API_KEY is Hermes's key for its own speech and vision settings
+    # and is no longer passed to scripts, so it is not read here, and never as a fallback.
+    key = setting("OMLX_SCRIPT_API_KEY")
     if not key:
-        raise OMLXError("OMLX_API_KEY is not configured")
+        raise OMLXError("OMLX_SCRIPT_API_KEY is not configured (since 6.2 the skill reads only this key, not OMLX_API_KEY)")
     return {"base_url": base, "model": selected_model, "api_key": key}
 
 

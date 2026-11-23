@@ -30,7 +30,7 @@ class ModelResidencyTests(unittest.TestCase):
                 loaded.remove(model)
             return {"id": model, "loaded": load}
 
-        invented = {"OMLX_BASE_URL": "http://127.0.0.1:8000", "OMLX_API_KEY": "test-key"}   # no server is called
+        invented = {"OMLX_BASE_URL": "http://127.0.0.1:8000", "OMLX_SCRIPT_API_KEY": "test-key"}   # no server is called
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, invented), \
              patch.object(model_arbiter.omlx_text, "loaded_models", loaded_models), \
              patch.object(model_arbiter.omlx_text, "transition", transition):
